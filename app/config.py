@@ -27,6 +27,13 @@ class Settings(BaseModel):
     sickw_base_url: str = "https://sickw.com/api.php"
     sickw_default_service: int = 61  # iPhone Carrier + FMI + Blacklist bundle
 
+    # Firmware / IPSW
+    ipsw_cache_dir: Path = Path("")
+    ipsw_cache_max_gb: float = 20.0
+    shsh_blob_dir: Path = Path("")
+    cert_output_dir: Path = Path("")
+    ipsw_api_base: str = "https://api.ipsw.me/v4"
+
     def model_post_init(self, __context: object) -> None:
         if not self.db_path.is_absolute():
             self.db_path = self.project_root / "db" / "idiag.db"
@@ -35,6 +42,12 @@ class Settings(BaseModel):
         self.photos_dir = self.data_dir / "photos"
         self.crash_patterns_path = self.data_dir / "crash_patterns.json"
         self.device_capabilities_path = self.data_dir / "device_capabilities.json"
+        if not self.ipsw_cache_dir.is_absolute():
+            self.ipsw_cache_dir = self.data_dir / "ipsw_cache"
+        if not self.shsh_blob_dir.is_absolute():
+            self.shsh_blob_dir = self.data_dir / "shsh_blobs"
+        if not self.cert_output_dir.is_absolute():
+            self.cert_output_dir = self.data_dir / "certificates"
 
 
 settings = Settings()
