@@ -10,6 +10,7 @@ from typing import Optional
 from app.config import settings
 from app.models.device import DeviceRecord
 from app.models.diagnostic import DiagnosticResult
+from app.models.firmware import SHSHBlob, WipeRecord
 from app.models.sales import PhotoRecord, SalesRecord
 from app.models.verification import VerificationResult
 
@@ -84,6 +85,31 @@ CREATE TABLE IF NOT EXISTS sales (
     profit REAL,
     notes TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS shsh_blobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ecid TEXT NOT NULL,
+    device_model TEXT NOT NULL,
+    ios_version TEXT NOT NULL,
+    blob_path TEXT NOT NULL,
+    saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(ecid, ios_version)
+);
+
+CREATE TABLE IF NOT EXISTS wipe_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id INTEGER NOT NULL REFERENCES devices(id),
+    udid TEXT NOT NULL,
+    serial TEXT DEFAULT '',
+    imei TEXT DEFAULT '',
+    model TEXT DEFAULT '',
+    ios_version TEXT DEFAULT '',
+    method TEXT NOT NULL DEFAULT 'factory_reset',
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    operator TEXT DEFAULT '',
+    success INTEGER NOT NULL DEFAULT 0,
+    cert_path TEXT DEFAULT ''
 );
 """
 
@@ -326,6 +352,106 @@ class InventoryDB:
             profit=row["profit"], notes=row["notes"] or "",
             created_at=row["created_at"],
         )
+
+    # -- SHSH Blobs --
+
+    def save_shsh_blob(
+        self, ecid: str, device_model: str, ios_version: str, blob_path: str
+    ) -> int:
+        """Insert or update an SHSH blob record. Returns row id."""
+        with self._lock:
+            existing = self.conn.execute(
+                "SELECT id FROM shsh_blobs WHERE ecid=? AND ios_version=?",
+                (ecid, ios_version),
+            ).fetchone()
+            if existing:
+                self.conn.execute(
+                    "UPDATE shsh_blobs SET blob_path=?, saved_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (blob_path, existing["id"]),
+                )
+                self.conn.commit()
+                return existing["id"]
+            cur = self.conn.execute(
+                """INSERT INTO shsh_blobs (ecid, device_model, ios_version, blob_path)
+                   VALUES (?, ?, ?, ?)""",
+                (ecid, device_model, ios_version, blob_path),
+            )
+            self.conn.commit()
+            return cur.lastrowid  # type: ignore[return-value]
+
+    def list_shsh_blobs(self, ecid: Optional[str] = None) -> list[SHSHBlob]:
+        """List SHSH blobs, optionally filtered by ECID."""
+        with self._lock:
+            if ecid:
+                rows = self.conn.execute(
+                    "SELECT * FROM shsh_blobs WHERE ecid=? ORDER BY saved_at DESC",
+                    (ecid,),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT * FROM shsh_blobs ORDER BY saved_at DESC"
+                ).fetchall()
+            return [
+                SHSHBlob(
+                    id=r["id"], ecid=r["ecid"], device_model=r["device_model"],
+                    ios_version=r["ios_version"], blob_path=r["blob_path"],
+                    saved_at=r["saved_at"],
+                )
+                for r in rows
+            ]
+
+    # -- Wipe Records --
+
+    def save_wipe_record(
+        self,
+        device_id: int,
+        udid: str,
+        serial: str,
+        imei: str,
+        model: str,
+        ios_version: str,
+        method: str,
+        operator: str = "",
+        success: bool = False,
+        cert_path: str = "",
+    ) -> int:
+        """Insert a wipe record. Returns row id."""
+        with self._lock:
+            cur = self.conn.execute(
+                """INSERT INTO wipe_records
+                   (device_id, udid, serial, imei, model, ios_version, method,
+                    operator, success, cert_path)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    device_id, udid, serial, imei, model, ios_version,
+                    method, operator, 1 if success else 0, cert_path,
+                ),
+            )
+            self.conn.commit()
+            return cur.lastrowid  # type: ignore[return-value]
+
+    def list_wipe_records(self, device_id: Optional[int] = None) -> list[WipeRecord]:
+        """List wipe records, optionally filtered by device_id."""
+        with self._lock:
+            if device_id is not None:
+                rows = self.conn.execute(
+                    "SELECT * FROM wipe_records WHERE device_id=? ORDER BY timestamp DESC",
+                    (device_id,),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT * FROM wipe_records ORDER BY timestamp DESC"
+                ).fetchall()
+            return [
+                WipeRecord(
+                    id=r["id"], device_id=r["device_id"], udid=r["udid"],
+                    serial=r["serial"], imei=r["imei"], model=r["model"],
+                    ios_version=r["ios_version"], method=r["method"],
+                    timestamp=r["timestamp"], operator=r["operator"],
+                    success=bool(r["success"]), cert_path=r["cert_path"],
+                )
+                for r in rows
+            ]
 
     # -- Helpers --
 

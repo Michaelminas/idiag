@@ -7,6 +7,7 @@ import pytest
 
 from app.models.device import DeviceRecord
 from app.models.diagnostic import BatteryInfo, DiagnosticResult, PartsOriginality, StorageInfo
+from app.models.firmware import SHSHBlob, WipeRecord
 from app.models.verification import VerificationResult
 from app.services.inventory_db import InventoryDB
 
@@ -79,3 +80,64 @@ class TestVerificationStorage:
         )
         ver_id = db.save_verification(device_id, result)
         assert ver_id is not None
+
+
+# -- SHSH Blob Tests --
+
+
+def test_save_and_list_shsh_blobs(db):
+    """Save SHSH blobs and retrieve them by ECID."""
+    blob_id = db.save_shsh_blob(
+        ecid="0x1234ABCD",
+        device_model="iPhone14,2",
+        ios_version="17.4",
+        blob_path="/data/shsh/blob1.shsh2",
+    )
+    assert blob_id > 0
+    blobs = db.list_shsh_blobs(ecid="0x1234ABCD")
+    assert len(blobs) == 1
+    assert blobs[0].ios_version == "17.4"
+    assert blobs[0].blob_path == "/data/shsh/blob1.shsh2"
+
+
+def test_shsh_blob_unique_constraint(db):
+    """Same ECID + version should update, not duplicate."""
+    db.save_shsh_blob("0xAAAA", "iPhone14,2", "17.4", "/path/a.shsh2")
+    db.save_shsh_blob("0xAAAA", "iPhone14,2", "17.4", "/path/b.shsh2")
+    blobs = db.list_shsh_blobs(ecid="0xAAAA")
+    assert len(blobs) == 1
+    assert blobs[0].blob_path == "/path/b.shsh2"
+
+
+# -- Wipe Record Tests --
+
+
+def _insert_test_device(db) -> int:
+    """Helper to insert a device for FK references."""
+    return db.upsert_device(DeviceRecord(
+        udid="test-udid-001", serial="C39FAKE123", imei="353456789012345",
+        model="iPhone14,2", ios_version="17.4",
+    ))
+
+
+def test_save_and_get_wipe_record(db):
+    """Save a wipe record and retrieve by device_id."""
+    device_id = _insert_test_device(db)
+    wipe_id = db.save_wipe_record(
+        device_id=device_id,
+        udid="test-udid-001",
+        serial="C39FAKE123",
+        imei="353456789012345",
+        model="iPhone14,2",
+        ios_version="17.4",
+        method="factory_reset",
+        operator="TestUser",
+        success=True,
+        cert_path="/data/certs/cert001.pdf",
+    )
+    assert wipe_id > 0
+    records = db.list_wipe_records(device_id=device_id)
+    assert len(records) == 1
+    assert records[0].method == "factory_reset"
+    assert records[0].success is True
+    assert records[0].cert_path == "/data/certs/cert001.pdf"
