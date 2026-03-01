@@ -38,3 +38,5 @@ class CrashAnalysis(BaseModel):
     max_severity: int = 0
     risk_score: float = 0.0  # 0-100
     summary: str = ""
+    trends: dict[str, str] = {}  # subsystem -> "improving"|"stable"|"worsening"
+    predicted_failures: list[str] = []  # plain-English failure predictions

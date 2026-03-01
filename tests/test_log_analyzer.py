@@ -245,3 +245,34 @@ class TestAllPatterns:
     def test_case_insensitive(self):
         m = analyze_crash_text("KERNEL PANIC IN APPLEBCMWLAN driver")
         assert m is not None and m.subsystem == "WiFi"
+
+
+# ---------------------------------------------------------------------------
+# CrashAnalysis model fields
+# ---------------------------------------------------------------------------
+
+
+class TestCrashAnalysisModelFields:
+    """Verify trends and predicted_failures fields exist on CrashAnalysis."""
+
+    def test_trends_field_default(self):
+        analysis = CrashAnalysis()
+        assert analysis.trends == {}
+
+    def test_predicted_failures_field_default(self):
+        analysis = CrashAnalysis()
+        assert analysis.predicted_failures == []
+
+    def test_trends_field_accepts_data(self):
+        analysis = CrashAnalysis(
+            trends={"Camera": "worsening", "WiFi": "stable"}
+        )
+        assert analysis.trends["Camera"] == "worsening"
+        assert analysis.trends["WiFi"] == "stable"
+
+    def test_predicted_failures_field_accepts_data(self):
+        analysis = CrashAnalysis(
+            predicted_failures=["Camera hardware — 5 crashes, increasing trend."]
+        )
+        assert len(analysis.predicted_failures) == 1
+        assert "Camera" in analysis.predicted_failures[0]
