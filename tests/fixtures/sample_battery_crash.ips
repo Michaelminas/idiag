@@ -1,0 +1,7 @@
+{"bug_type":"210","timestamp":"2025-01-10 08:15:22","name":"iPhone"}
+Date/Time:       2025-01-10 08:15:22
+OS Version:      iPhone OS 17.2
+
+Exception Type:  EXC_BAD_ACCESS
+kernel panic in AppleARMPMU power management unit failure
+Thread 0 crashed

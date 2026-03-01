@@ -1,0 +1,8 @@
+{"bug_type":"210","timestamp":"2025-01-15 10:23:45","name":"iPhone"}
+Date/Time:       2025-01-15 10:23:45
+OS Version:      iPhone OS 17.2
+Hardware Model:  D63AP
+
+Exception Type:  EXC_BAD_ACCESS (SIGBUS)
+Kernel panic in AppleH13CamISP at 0xfffffff00a123456
+Thread 0 crashed with ARM Thread State
