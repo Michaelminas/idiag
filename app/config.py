@@ -18,6 +18,7 @@ class Settings(BaseModel):
     project_root: Path = Path(__file__).resolve().parent.parent
     db_path: Path = Path("")
     data_dir: Path = Path("")
+    photos_dir: Path = Path("")
     crash_patterns_path: Path = Path("")
     device_capabilities_path: Path = Path("")
 
@@ -31,6 +32,7 @@ class Settings(BaseModel):
             self.db_path = self.project_root / "db" / "idiag.db"
         if not self.data_dir.is_absolute():
             self.data_dir = self.project_root / "data"
+        self.photos_dir = self.data_dir / "photos"
         self.crash_patterns_path = self.data_dir / "crash_patterns.json"
         self.device_capabilities_path = self.data_dir / "device_capabilities.json"
 

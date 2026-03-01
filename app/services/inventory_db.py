@@ -10,6 +10,7 @@ from typing import Optional
 from app.config import settings
 from app.models.device import DeviceRecord
 from app.models.diagnostic import DiagnosticResult
+from app.models.sales import PhotoRecord, SalesRecord
 from app.models.verification import VerificationResult
 
 SCHEMA = """
@@ -61,6 +62,28 @@ CREATE TABLE IF NOT EXISTS verifications (
     carrier_locked INTEGER DEFAULT 0,
     mdm TEXT DEFAULT '',
     raw_json TEXT DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS photos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id INTEGER NOT NULL REFERENCES devices(id),
+    filename TEXT NOT NULL,
+    filepath TEXT NOT NULL,
+    label TEXT DEFAULT 'other',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id INTEGER NOT NULL REFERENCES devices(id),
+    sell_price REAL,
+    platform TEXT DEFAULT 'local',
+    fees REAL DEFAULT 0,
+    sold_at TIMESTAMP,
+    days_in_inventory INTEGER,
+    profit REAL,
+    notes TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -156,6 +179,8 @@ class InventoryDB:
 
     def delete_device(self, device_id: int) -> bool:
         with self._lock:
+            self.conn.execute("DELETE FROM photos WHERE device_id=?", (device_id,))
+            self.conn.execute("DELETE FROM sales WHERE device_id=?", (device_id,))
             self.conn.execute("DELETE FROM crash_reports WHERE device_id=?", (device_id,))
             self.conn.execute("DELETE FROM diagnostics WHERE device_id=?", (device_id,))
             self.conn.execute("DELETE FROM verifications WHERE device_id=?", (device_id,))
@@ -211,6 +236,96 @@ class InventoryDB:
             )
             self.conn.commit()
             return cur.lastrowid  # type: ignore[return-value]
+
+    # -- Photos --
+
+    def save_photo(self, record: PhotoRecord) -> int:
+        with self._lock:
+            cur = self.conn.execute(
+                """INSERT INTO photos (device_id, filename, filepath, label)
+                   VALUES (?, ?, ?, ?)""",
+                (record.device_id, record.filename, record.filepath, record.label),
+            )
+            self.conn.commit()
+            return cur.lastrowid
+
+    def list_photos(self, device_id: int) -> list[PhotoRecord]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM photos WHERE device_id=? ORDER BY created_at", (device_id,)
+            ).fetchall()
+            return [PhotoRecord(
+                id=r["id"], device_id=r["device_id"], filename=r["filename"],
+                filepath=r["filepath"], label=r["label"], created_at=r["created_at"],
+            ) for r in rows]
+
+    def delete_photo(self, photo_id: int) -> bool:
+        with self._lock:
+            cur = self.conn.execute("DELETE FROM photos WHERE id=?", (photo_id,))
+            self.conn.commit()
+            return cur.rowcount > 0
+
+    # -- Sales --
+
+    def save_sale(self, record: SalesRecord) -> int:
+        with self._lock:
+            # Auto-compute profit if sell_price is set
+            profit = None
+            if record.sell_price is not None:
+                device = self._get_device_by_id_unlocked(record.device_id)
+                buy_price = device.buy_price if device and device.buy_price else 0.0
+                profit = record.sell_price - buy_price - record.fees
+
+            # Auto-compute days_in_inventory
+            days = record.days_in_inventory
+            if days is None:
+                device = self._get_device_by_id_unlocked(record.device_id)
+                if device and device.created_at:
+                    created = device.created_at if isinstance(device.created_at, datetime) else datetime.fromisoformat(str(device.created_at))
+                    days = (datetime.now() - created).days
+
+            now = datetime.now().isoformat()
+            cur = self.conn.execute(
+                """INSERT INTO sales (device_id, sell_price, platform, fees,
+                   sold_at, days_in_inventory, profit, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (record.device_id, record.sell_price, record.platform,
+                 record.fees, record.sold_at or now, days, profit, record.notes),
+            )
+            self.conn.commit()
+            return cur.lastrowid
+
+    def get_sale(self, sale_id: int) -> Optional[SalesRecord]:
+        with self._lock:
+            row = self.conn.execute("SELECT * FROM sales WHERE id=?", (sale_id,)).fetchone()
+            return self._row_to_sale(row) if row else None
+
+    def list_sales(self, device_id: Optional[int] = None) -> list[SalesRecord]:
+        with self._lock:
+            if device_id is not None:
+                rows = self.conn.execute(
+                    "SELECT * FROM sales WHERE device_id=? ORDER BY created_at DESC", (device_id,)
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT * FROM sales ORDER BY created_at DESC"
+                ).fetchall()
+            return [self._row_to_sale(r) for r in rows]
+
+    def _get_device_by_id_unlocked(self, device_id: int) -> Optional[DeviceRecord]:
+        row = self.conn.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
+        return self._row_to_device(row) if row else None
+
+    @staticmethod
+    def _row_to_sale(row: sqlite3.Row) -> SalesRecord:
+        return SalesRecord(
+            id=row["id"], device_id=row["device_id"],
+            sell_price=row["sell_price"], platform=row["platform"] or "local",
+            fees=row["fees"] or 0.0, sold_at=row["sold_at"],
+            days_in_inventory=row["days_in_inventory"],
+            profit=row["profit"], notes=row["notes"] or "",
+            created_at=row["created_at"],
+        )
 
     # -- Helpers --
 
