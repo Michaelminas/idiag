@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.api import devices, diagnostics, firmware, inventory, photos, pricing, reports, sales, serial, verification, websocket
+from app.api import devices, diagnostics, firmware, inventory, photos, pricing, reports, sales, serial, tools, verification, websocket
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -57,6 +57,7 @@ app.include_router(websocket.router)
 app.include_router(photos.router)
 app.include_router(sales.router)
 app.include_router(reports.router)
+app.include_router(tools.router)
 
 # Static files — serve CSS/JS from /static
 static_dir = Path(__file__).parent / "static"
