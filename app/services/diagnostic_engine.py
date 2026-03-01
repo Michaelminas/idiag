@@ -125,3 +125,51 @@ def _get_storage(lockdown: Any) -> StorageInfo:
     except Exception as e:
         logger.error("Storage check failed: %s", e)
     return StorageInfo()
+
+
+def check_cable_quality(lockdown: Any) -> "CableCheckResult":
+    """Check USB cable quality based on connection properties."""
+    from app.models.tools import CableCheckResult
+
+    warnings: list[str] = []
+    connection_type = "Unknown"
+    charge_capable = False
+    data_capable = True  # Connected = data works
+    negotiated_speed = None
+
+    try:
+        # Battery domain for charge capability
+        battery_info = lockdown.get_value(domain="com.apple.mobile.battery")
+        if battery_info and isinstance(battery_info, dict):
+            charge_capable = battery_info.get("ExternalChargeCapable", False)
+            if not charge_capable:
+                warnings.append("Cable does not support charging — possible data-only or damaged cable")
+
+        # Connection speed
+        speed = lockdown.get_value(key="ConnectionSpeed")
+        if speed and isinstance(speed, (int, float)):
+            if speed >= 5_000_000_000:
+                connection_type = "USB 3.0 SuperSpeed"
+                negotiated_speed = f"{speed / 1_000_000_000:.1f} Gbps"
+            elif speed >= 480_000_000:
+                connection_type = "USB 2.0 High-Speed"
+                negotiated_speed = f"{speed / 1_000_000:.0f} Mbps"
+            elif speed >= 12_000_000:
+                connection_type = "USB 1.1 Full-Speed (slow)"
+                negotiated_speed = f"{speed / 1_000_000:.0f} Mbps"
+                warnings.append("Low USB speed detected — possible poor quality cable")
+            else:
+                connection_type = "USB Low-Speed"
+                negotiated_speed = f"{speed / 1_000:.0f} Kbps"
+                warnings.append("Very low USB speed — cable may be damaged or non-MFi")
+    except Exception as e:
+        logger.warning("Cable check failed: %s", e)
+        warnings.append(f"Could not read cable properties: {e}")
+
+    return CableCheckResult(
+        connection_type=connection_type,
+        charge_capable=charge_capable,
+        data_capable=data_capable,
+        negotiated_speed=negotiated_speed,
+        warnings=warnings,
+    )
