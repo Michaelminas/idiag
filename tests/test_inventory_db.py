@@ -185,3 +185,46 @@ class TestSellPriceAndProfit:
         assert fetched is not None
         assert fetched.sell_price == 250.0
         assert fetched.profit == 150.0
+
+
+# -- History Query Tests --
+
+
+class TestHistoryQueries:
+    def test_list_diagnostics_for_device(self, db: InventoryDB):
+        device_id = db.upsert_device(DeviceRecord(udid="hist-diag"))
+        result1 = DiagnosticResult(
+            battery=BatteryInfo(health_percent=90.0, cycle_count=100),
+            parts=PartsOriginality(all_original=True),
+            storage=StorageInfo(total_gb=128.0, used_gb=60.0),
+        )
+        result2 = DiagnosticResult(
+            battery=BatteryInfo(health_percent=88.0, cycle_count=150),
+            parts=PartsOriginality(all_original=True),
+            storage=StorageInfo(total_gb=128.0, used_gb=70.0),
+        )
+        db.save_diagnostic(device_id, result1)
+        db.save_diagnostic(device_id, result2)
+        rows = db.list_diagnostics(device_id)
+        assert len(rows) == 2
+        # Both diagnostics should be present
+        cycles = {rows[0]["battery_cycles"], rows[1]["battery_cycles"]}
+        assert cycles == {100, 150}
+
+    def test_list_verifications_for_device(self, db: InventoryDB):
+        device_id = db.upsert_device(DeviceRecord(udid="hist-verify"))
+        result = VerificationResult(
+            blacklist_status="clean", fmi_status="off",
+            carrier="Verizon", carrier_locked=False,
+        )
+        db.save_verification(device_id, result)
+        rows = db.list_verifications(device_id)
+        assert len(rows) == 1
+        assert rows[0]["blacklist_status"] == "clean"
+
+    def test_list_crash_history_for_device(self, db: InventoryDB):
+        device_id = db.upsert_device(DeviceRecord(udid="hist-crash"))
+        db.save_crash_summary(device_id, "backboardd", "SpringBoard", 3, 5)
+        db.save_crash_summary(device_id, "mediaserverd", "Audio", 2, 2)
+        rows = db.list_crash_history(device_id)
+        assert len(rows) == 2

@@ -459,6 +459,35 @@ class InventoryDB:
                 for r in rows
             ]
 
+    # -- History Queries --
+
+    def list_diagnostics(self, device_id: int) -> list[dict]:
+        """Return all diagnostic records for a device, newest first."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM diagnostics WHERE device_id=? ORDER BY timestamp DESC",
+                (device_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_verifications(self, device_id: int) -> list[dict]:
+        """Return all verification records for a device, newest first."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM verifications WHERE device_id=? ORDER BY timestamp DESC",
+                (device_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_crash_history(self, device_id: int) -> list[dict]:
+        """Return all crash report summaries for a device, newest first."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM crash_reports WHERE device_id=? ORDER BY timestamp DESC",
+                (device_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     # -- Helpers --
 
     @staticmethod
