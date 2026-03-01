@@ -1,6 +1,7 @@
 """Firmware management API routes — IPSW, signing, SHSH, restore, wipe."""
 
 import asyncio
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -18,8 +19,19 @@ from app.services import firmware_manager, wipe_service
 from app.services.inventory_db import InventoryDB
 
 router = APIRouter(prefix="/api/firmware", tags=["firmware"])
-db = InventoryDB()
-db.init_db()
+
+_db_lock = threading.Lock()
+_db: InventoryDB | None = None
+
+
+def get_db() -> InventoryDB:
+    global _db
+    if _db is None:
+        with _db_lock:
+            if _db is None:  # double-check after acquiring lock
+                _db = InventoryDB()
+                _db.init_db()
+    return _db
 
 
 # -- Request models --
@@ -98,14 +110,14 @@ async def download_ipsw(req: DownloadRequest):
 
 # -- SHSH Blobs --
 
-@router.post("/shsh/{udid}")
-async def save_shsh_blobs(udid: str, ecid: str, model: str, version: str):
+@router.post("/shsh")
+async def save_shsh_blobs(ecid: str, model: str, version: str):
     """Save SHSH blobs for a device + iOS version."""
     path = await asyncio.to_thread(
         firmware_manager.save_shsh_blobs, ecid, model, version
     )
     if path:
-        await asyncio.to_thread(db.save_shsh_blob, ecid, model, version, str(path))
+        await asyncio.to_thread(get_db().save_shsh_blob, ecid, model, version, str(path))
         return {"status": "saved", "path": str(path)}
     raise HTTPException(500, "Failed to save SHSH blobs")
 
@@ -113,7 +125,7 @@ async def save_shsh_blobs(udid: str, ecid: str, model: str, version: str):
 @router.get("/shsh")
 async def list_shsh_blobs(ecid: Optional[str] = None):
     """List saved SHSH blobs."""
-    return await asyncio.to_thread(db.list_shsh_blobs, ecid)
+    return await asyncio.to_thread(get_db().list_shsh_blobs, ecid)
 
 
 # -- Device Mode Helpers --
@@ -200,11 +212,11 @@ async def wipe_device(udid: str, req: WipeRequest):
     if cert_path:
         record.cert_path = str(cert_path)
 
-    device = await asyncio.to_thread(db.get_device_by_udid, udid)
+    device = await asyncio.to_thread(get_db().get_device_by_udid, udid)
     if device and device.id:
         record.device_id = device.id
         await asyncio.to_thread(
-            db.save_wipe_record,
+            get_db().save_wipe_record,
             device.id, udid, req.serial, req.imei, req.model,
             req.ios_version, "factory_reset", req.operator, ok,
             str(cert_path) if cert_path else "",
@@ -222,7 +234,7 @@ async def wipe_device(udid: str, req: WipeRequest):
 @router.get("/certificate/{device_id}")
 async def download_certificate(device_id: int):
     """Download the most recent erasure certificate PDF for a device."""
-    records = await asyncio.to_thread(db.list_wipe_records, device_id)
+    records = await asyncio.to_thread(get_db().list_wipe_records, device_id)
     if not records:
         raise HTTPException(404, "No wipe records found")
 

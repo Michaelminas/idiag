@@ -216,6 +216,7 @@ class InventoryDB:
             self.conn.execute("DELETE FROM crash_reports WHERE device_id=?", (device_id,))
             self.conn.execute("DELETE FROM diagnostics WHERE device_id=?", (device_id,))
             self.conn.execute("DELETE FROM verifications WHERE device_id=?", (device_id,))
+            self.conn.execute("DELETE FROM wipe_records WHERE device_id=?", (device_id,))
             cur = self.conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
             self.conn.commit()
             return cur.rowcount > 0

@@ -66,7 +66,8 @@ def generate_certificate(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     ts = record.timestamp.strftime("%Y%m%d_%H%M%S") if record.timestamp else "unknown"
-    filename = f"erasure_{record.serial}_{ts}.pdf"
+    identifier = record.serial or record.udid or "unknown"
+    filename = f"erasure_{identifier}_{ts}.pdf"
     output_path = output_dir / filename
 
     try:

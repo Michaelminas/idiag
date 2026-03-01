@@ -251,6 +251,8 @@ def download_ipsw(
 # SHSH Blob Saving
 # ---------------------------------------------------------------------------
 
+# TODO: Add board config and iOS version to TSS request for version-specific SHSH blobs.
+# Current implementation is a placeholder — real deployment needs proper BuildManifest parsing.
 def _get_tss_response(ecid: str, device_model: str, ios_version: str) -> bytes:
     """Request SHSH2 blob from Apple TSS server via pymobiledevice3.
 
