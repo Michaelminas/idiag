@@ -1,0 +1,33 @@
+[project]
+name = "idiag"
+version = "0.1.0"
+description = "iPhone Reseller Diagnostic & Management Tool"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pymobiledevice3>=4.0.0",
+    "pywebview[gtk]>=5.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0",
+    "jinja2>=3.1.0",
+    "aiosqlite>=0.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[project.scripts]
+idiag = "app.main:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

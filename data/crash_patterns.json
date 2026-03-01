@@ -1,0 +1,12 @@
+[
+  {"pattern": "kernel panic in AppleH.*CamISP", "subsystem": "Camera", "severity": 5, "description": "Camera hardware failure - likely needs replacement"},
+  {"pattern": "kernel panic in AppleBCMWLAN", "subsystem": "WiFi", "severity": 4, "description": "WiFi chipset instability - may need board repair"},
+  {"pattern": "EXC_RESOURCE.*cpu.*backboardd", "subsystem": "Display", "severity": 3, "description": "Display driver stress - possible screen issue"},
+  {"pattern": "kernel panic in AppleARMPMU", "subsystem": "Battery/Power", "severity": 5, "description": "Power management failure - battery or board issue"},
+  {"pattern": "watchdog timeout in CommCenter", "subsystem": "Baseband", "severity": 4, "description": "Cellular modem hang - possible baseband failure"},
+  {"pattern": "kernel panic in AppleSEP", "subsystem": "Security", "severity": 5, "description": "Secure Enclave issue - Face ID/Touch ID may fail"},
+  {"pattern": "EXC_BAD_ACCESS in AGXMetal", "subsystem": "GPU", "severity": 3, "description": "GPU crash - monitor frequency, may indicate board issue"},
+  {"pattern": "kernel panic in IONVMe", "subsystem": "Storage", "severity": 5, "description": "NAND storage controller panic - high brick risk"},
+  {"pattern": "repeated springboardd crashes", "subsystem": "System", "severity": 2, "description": "SpringBoard instability - usually software, try restore"},
+  {"pattern": "thermalmonitord EXC_RESOURCE", "subsystem": "Thermal", "severity": 4, "description": "Thermal throttling failure - possible thermal paste issue"}
+]

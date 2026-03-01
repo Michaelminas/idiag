@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iDiag — iPhone Diagnostic Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <style>
+        .status-green { color: #22c55e; }
+        .status-yellow { color: #eab308; }
+        .status-red { color: #ef4444; }
+        .status-gray { color: #9ca3af; }
+        .card { @apply bg-white rounded-lg shadow-md p-4 mb-4; }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <!-- Header -->
+    <header class="bg-gray-900 text-white py-3 px-6 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <h1 class="text-xl font-bold">iDiag</h1>
+            <span class="text-gray-400 text-sm">v{{ version }}</span>
+        </div>
+        <div id="connection-status" class="flex items-center gap-2">
+            <span id="device-indicator" class="w-3 h-3 rounded-full bg-gray-500"></span>
+            <span id="device-status-text" class="text-sm text-gray-400">No device connected</span>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-6">
+        <!-- No Device State -->
+        <div id="no-device" class="text-center py-20">
+            <div class="text-6xl mb-4">📱</div>
+            <h2 class="text-2xl font-semibold text-gray-700 mb-2">Connect an iPhone</h2>
+            <p class="text-gray-500">Plug in a device via USB cable to begin diagnostics</p>
+            <div class="mt-4">
+                <button onclick="scanDevices()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                    Scan for Devices
+                </button>
+            </div>
+        </div>
+
+        <!-- Device Connected - Dashboard -->
+        <div id="device-dashboard" class="hidden">
+            <!-- Overall Assessment Banner -->
+            <div id="assessment-banner" class="rounded-lg p-6 mb-6 bg-white shadow-md">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 id="device-model" class="text-2xl font-bold text-gray-800"></h2>
+                        <p id="device-ios" class="text-gray-500"></p>
+                    </div>
+                    <div class="text-center">
+                        <div id="overall-grade" class="text-5xl font-black"></div>
+                        <div id="grade-label" class="text-sm text-gray-500 mt-1"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Diagnostic Cards Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <!-- Device Info -->
+                <div class="bg-white rounded-lg shadow-md p-4">
+                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Device Info</h3>
+                    <dl id="device-info-list" class="space-y-1 text-sm">
+                    </dl>
+                </div>
+
+                <!-- Serial Decode -->
+                <div class="bg-white rounded-lg shadow-md p-4">
+                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Serial Decode</h3>
+                    <dl id="serial-decode-list" class="space-y-1 text-sm">
+                    </dl>
+                </div>
+
+                <!-- Battery Health -->
+                <div class="bg-white rounded-lg shadow-md p-4">
+                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Battery</h3>
+                    <div id="battery-info" class="space-y-2">
+                    </div>
+                </div>
+
+                <!-- Parts Originality -->
+                <div class="bg-white rounded-lg shadow-md p-4">
+                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Parts Originality</h3>
+                    <div id="parts-info" class="space-y-1 text-sm">
+                    </div>
+                </div>
+
+                <!-- Verification Status -->
+                <div class="bg-white rounded-lg shadow-md p-4">
+                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Verification</h3>
+                    <div id="verification-info" class="space-y-1 text-sm">
+                    </div>
+                </div>
+
+                <!-- Crash Analysis -->
+                <div class="bg-white rounded-lg shadow-md p-4">
+                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Crash Analysis</h3>
+                    <div id="crash-info" class="space-y-1 text-sm">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions Bar -->
+            <div class="mt-6 flex gap-3">
+                <button onclick="runFullDiagnostics()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                    Run Full Diagnostics
+                </button>
+                <button onclick="saveToInventory()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+                    Save to Inventory
+                </button>
+                <button onclick="location.href='/api/inventory/devices'" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">
+                    View Inventory
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let ws = null;
+        let currentDevice = null;
+
+        function connectWebSocket() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg.event === 'device_connected') {
+                    onDeviceConnected(msg.data);
+                } else if (msg.event === 'device_disconnected') {
+                    onDeviceDisconnected(msg.data);
+                } else if (msg.event === 'device_list') {
+                    if (msg.data.udids.length > 0) {
+                        fetchDeviceInfo(msg.data.udids[0]);
+                    }
+                }
+            };
+
+            ws.onclose = () => {
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        function scanDevices() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({action: 'scan'}));
+            }
+            // Also try direct API
+            fetch('/api/devices/connected')
+                .then(r => r.json())
+                .then(udids => {
+                    if (udids.length > 0) {
+                        fetchDeviceInfo(udids[0]);
+                    }
+                })
+                .catch(e => console.error('Scan failed:', e));
+        }
+
+        function fetchDeviceInfo(udid) {
+            fetch(`/api/devices/info/${udid}`)
+                .then(r => r.json())
+                .then(info => onDeviceConnected({udid, info}))
+                .catch(e => console.error('Failed to get device info:', e));
+        }
+
+        function onDeviceConnected(data) {
+            currentDevice = data;
+            const info = data.info || {};
+
+            // Update header
+            document.getElementById('device-indicator').className = 'w-3 h-3 rounded-full bg-green-500';
+            document.getElementById('device-status-text').textContent = info.device_name || info.product_type || 'Connected';
+
+            // Show dashboard, hide placeholder
+            document.getElementById('no-device').classList.add('hidden');
+            document.getElementById('device-dashboard').classList.remove('hidden');
+
+            // Populate device info
+            document.getElementById('device-model').textContent = info.product_type || 'Unknown Device';
+            document.getElementById('device-ios').textContent = `iOS ${info.ios_version || '?'} (${info.build_version || '?'})`;
+
+            const infoList = document.getElementById('device-info-list');
+            infoList.innerHTML = `
+                <div class="flex justify-between"><span class="text-gray-500">UDID</span><span class="font-mono text-xs">${info.udid || '-'}</span></div>
+                <div class="flex justify-between"><span class="text-gray-500">Serial</span><span>${info.serial || '-'}</span></div>
+                <div class="flex justify-between"><span class="text-gray-500">IMEI</span><span>${info.imei || '-'}</span></div>
+                <div class="flex justify-between"><span class="text-gray-500">Model</span><span>${info.model_number || '-'}</span></div>
+                <div class="flex justify-between"><span class="text-gray-500">Hardware</span><span>${info.hardware_model || '-'}</span></div>
+                <div class="flex justify-between"><span class="text-gray-500">Color</span><span>${info.device_color || '-'}</span></div>
+                <div class="flex justify-between"><span class="text-gray-500">WiFi MAC</span><span class="font-mono text-xs">${info.wifi_mac || '-'}</span></div>
+            `;
+
+            // Serial decode
+            if (info.serial) {
+                fetchSerialDecode(info.serial);
+            }
+        }
+
+        function onDeviceDisconnected(data) {
+            currentDevice = null;
+            document.getElementById('device-indicator').className = 'w-3 h-3 rounded-full bg-gray-500';
+            document.getElementById('device-status-text').textContent = 'No device connected';
+            document.getElementById('no-device').classList.remove('hidden');
+            document.getElementById('device-dashboard').classList.add('hidden');
+        }
+
+        function fetchSerialDecode(serial) {
+            // Serial decoding is done client-side or via a future API endpoint
+            // For now, show the raw serial
+            document.getElementById('serial-decode-list').innerHTML = `
+                <div class="flex justify-between"><span class="text-gray-500">Serial</span><span>${serial}</span></div>
+                <div class="text-gray-400 text-xs mt-2">Full decode available after diagnostics run</div>
+            `;
+        }
+
+        async function runFullDiagnostics() {
+            if (!currentDevice) return;
+            const udid = currentDevice.udid || currentDevice.info?.udid;
+            if (!udid) return;
+
+            // Show loading state
+            document.getElementById('battery-info').innerHTML = '<div class="text-gray-400 pulse">Running diagnostics...</div>';
+            document.getElementById('crash-info').innerHTML = '<div class="text-gray-400 pulse">Analyzing crash reports...</div>';
+            document.getElementById('verification-info').innerHTML = '<div class="text-gray-400 pulse">Checking verification...</div>';
+
+            try {
+                const diagResp = await fetch(`/api/diagnostics/run/${udid}`);
+                const diag = await diagResp.json();
+                renderDiagnostics(diag);
+            } catch (e) {
+                document.getElementById('battery-info').innerHTML = `<div class="text-red-500">Diagnostics failed: ${e.message}</div>`;
+            }
+        }
+
+        function renderDiagnostics(diag) {
+            // Battery
+            const bat = diag.battery || {};
+            const healthColor = bat.health_percent >= 90 ? 'text-green-600' : bat.health_percent >= 80 ? 'text-yellow-600' : 'text-red-600';
+            document.getElementById('battery-info').innerHTML = `
+                <div class="text-3xl font-bold ${healthColor}">${bat.health_percent || 0}%</div>
+                <div class="text-sm text-gray-500">Health</div>
+                <div class="grid grid-cols-2 gap-2 mt-2 text-sm">
+                    <div><span class="text-gray-500">Cycles:</span> ${bat.cycle_count || 0}</div>
+                    <div><span class="text-gray-500">Temp:</span> ${bat.temperature || 0}°C</div>
+                    <div><span class="text-gray-500">Design:</span> ${bat.design_capacity || 0} mAh</div>
+                    <div><span class="text-gray-500">Current:</span> ${bat.nominal_capacity || 0} mAh</div>
+                    <div><span class="text-gray-500">Charging:</span> ${bat.is_charging ? 'Yes' : 'No'}</div>
+                    <div><span class="text-gray-500">Voltage:</span> ${bat.voltage || 0} mV</div>
+                </div>
+            `;
+
+            // Parts
+            const parts = diag.parts || {};
+            const partsColor = parts.all_original ? 'text-green-600' : 'text-red-600';
+            document.getElementById('parts-info').innerHTML = `
+                <div class="${partsColor} font-semibold">${parts.all_original ? 'All Original' : 'Non-Original Parts Detected'}</div>
+                ${parts.replaced_parts?.length ? `<div class="text-red-500 mt-1">Replaced: ${parts.replaced_parts.join(', ')}</div>` : ''}
+                <div class="mt-2 space-y-1">
+                    <div class="flex justify-between"><span class="text-gray-500">Battery</span><span>${parts.battery_original === true ? '✓ Original' : parts.battery_original === false ? '✗ Replaced' : '? Unknown'}</span></div>
+                    <div class="flex justify-between"><span class="text-gray-500">Screen</span><span>${parts.screen_original === true ? '✓ Original' : parts.screen_original === false ? '✗ Replaced' : '? Unknown'}</span></div>
+                </div>
+            `;
+
+            // Storage
+            const stor = diag.storage || {};
+            document.getElementById('parts-info').innerHTML += `
+                <div class="mt-3 pt-2 border-t">
+                    <div class="flex justify-between"><span class="text-gray-500">Storage</span><span>${stor.total_gb || 0} GB</span></div>
+                    <div class="flex justify-between"><span class="text-gray-500">Used</span><span>${stor.used_gb || 0} GB</span></div>
+                </div>
+            `;
+        }
+
+        async function saveToInventory() {
+            if (!currentDevice?.info) return;
+            const info = currentDevice.info;
+            try {
+                const resp = await fetch('/api/inventory/devices', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        udid: info.udid,
+                        serial: info.serial,
+                        imei: info.imei,
+                        model: info.product_type,
+                        ios_version: info.ios_version,
+                        status: 'intake',
+                    }),
+                });
+                const result = await resp.json();
+                alert(`Saved to inventory (ID: ${result.id})`);
+            } catch (e) {
+                alert(`Failed to save: ${e.message}`);
+            }
+        }
+
+        // Init
+        connectWebSocket();
+    </script>
+</body>
+</html>
