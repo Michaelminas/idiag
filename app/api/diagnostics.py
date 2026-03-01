@@ -18,16 +18,16 @@ router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
 
 @router.get("/run")
 @router.get("/run/{udid}")
-def run_diagnostics(udid: str | None = None) -> DiagnosticResult:
+async def run_diagnostics(udid: str | None = None) -> DiagnosticResult:
     """Run hardware diagnostics (battery, parts, storage)."""
-    return diagnostic_engine.run_diagnostics(udid)
+    return await asyncio.to_thread(diagnostic_engine.run_diagnostics, udid)
 
 
 @router.get("/crashes")
 @router.get("/crashes/{udid}")
-def analyze_crashes(udid: str | None = None) -> CrashAnalysis:
+async def analyze_crashes(udid: str | None = None) -> CrashAnalysis:
     """Pull and analyze crash reports from device."""
-    return log_analyzer.analyze_device(udid)
+    return await asyncio.to_thread(log_analyzer.analyze_device, udid)
 
 
 class GradeRequest(BaseModel):

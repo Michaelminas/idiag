@@ -85,8 +85,9 @@ class InventoryDB:
 
     def init_db(self) -> None:
         """Create tables if they don't exist."""
-        self.conn.executescript(SCHEMA)
-        self.conn.commit()
+        with self._lock:
+            self.conn.executescript(SCHEMA)
+            self.conn.commit()
 
     def close(self) -> None:
         if self._conn:

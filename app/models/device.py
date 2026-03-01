@@ -1,9 +1,11 @@
 """Device-related data models."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
+
+DeviceStatus = Literal["intake", "testing", "listed", "sold", "returned", "junk"]
 
 
 class DeviceInfo(BaseModel):
@@ -46,7 +48,7 @@ class DeviceRecord(BaseModel):
     model: str = ""
     ios_version: str = ""
     grade: str = ""
-    status: str = "intake"
+    status: DeviceStatus = "intake"
     buy_price: Optional[float] = None
     notes: str = ""
     created_at: Optional[datetime] = None

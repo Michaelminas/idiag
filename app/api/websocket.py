@@ -36,10 +36,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     try:
         while True:
             data = await ws.receive_text()
-            msg = json.loads(data)
+            try:
+                msg = json.loads(data)
+            except json.JSONDecodeError:
+                await ws.send_text(json.dumps({"event": "error", "data": {"message": "Invalid JSON"}}))
+                continue
 
             if msg.get("action") == "scan":
-                devices = device_service.list_connected_devices()
+                devices = await asyncio.to_thread(device_service.list_connected_devices)
                 await ws.send_text(json.dumps({
                     "event": "device_list",
                     "data": {"udids": devices},
