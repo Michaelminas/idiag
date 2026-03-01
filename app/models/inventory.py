@@ -50,3 +50,5 @@ class FraudCheck(BaseModel):
 
     is_suspicious: bool = False
     flags: list[str] = []
+    fraud_score: int = 0  # 0-100 weighted score
+    randomized_note: str = ""  # note about randomized serial

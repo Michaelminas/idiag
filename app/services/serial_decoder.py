@@ -195,6 +195,35 @@ ANUMBER_MAP: dict[str, tuple[str, str]] = {
 }
 
 
+TAC_MAP: dict[str, str] = {
+    "35346211": "iPhone 13 Pro",
+    "35407115": "iPhone 13 Pro Max",
+    "35256211": "iPhone 13",
+    "35256311": "iPhone 13 mini",
+    "35467211": "iPhone 14",
+    "35467311": "iPhone 14 Plus",
+    "35523411": "iPhone 14 Pro",
+    "35523511": "iPhone 14 Pro Max",
+    "35691412": "iPhone 15",
+    "35691512": "iPhone 15 Plus",
+    "35691612": "iPhone 15 Pro",
+    "35691712": "iPhone 15 Pro Max",
+    "35474212": "iPhone SE (3rd gen)",
+    "35205610": "iPhone 12",
+    "35205510": "iPhone 12 mini",
+    "35205710": "iPhone 12 Pro",
+    "35205810": "iPhone 12 Pro Max",
+    "35391509": "iPhone 11",
+    "35395909": "iPhone 11 Pro",
+    "35395809": "iPhone 11 Pro Max",
+    "35325110": "iPhone SE (2nd gen)",
+    "35884810": "iPhone 16",
+    "35884910": "iPhone 16 Plus",
+    "35885010": "iPhone 16 Pro",
+    "35885110": "iPhone 16 Pro Max",
+}
+
+
 def cross_reference_check(
     serial: str,
     model_number: str,
@@ -203,6 +232,15 @@ def cross_reference_check(
 ) -> FraudCheck:
     """Cross-reference device identifiers to detect board swaps or tampering."""
     result = FraudCheck()
+    score = 0
+
+    # Check if serial is randomized
+    decoded = decode_serial(serial)
+    if decoded.is_randomized:
+        result.randomized_note = (
+            "This device has a randomized serial number (manufactured after 2021). "
+            "Serial-based factory/date decoding unavailable."
+        )
 
     # Resolve device names from both model number and product type
     a_num = model_number.strip().upper()
@@ -219,6 +257,7 @@ def cross_reference_check(
                 f"ModelNumber '{model_number}' -> '{model_name}' but "
                 f"ProductType '{product_type}' -> '{pt_name}'. Possible board swap."
             )
+            score += 30
 
     # IMEI validation
     if imei:
@@ -226,11 +265,25 @@ def cross_reference_check(
         if not imei_result.is_valid:
             result.is_suspicious = True
             result.flags.append(f"Invalid IMEI: {'; '.join(imei_result.notes)}")
+            score += 40
+
+        # TAC-based model cross-reference
+        if imei_result.tac:
+            tac_model = TAC_MAP.get(imei_result.tac)
+            if tac_model and pt_name and tac_model != pt_name:
+                result.is_suspicious = True
+                result.flags.append(
+                    f"IMEI TAC indicates '{tac_model}' but ProductType "
+                    f"'{product_type}' -> '{pt_name}'. Possible IMEI tampering."
+                )
+                score += 20
 
     if not result.flags:
         if model_entry or pt_name:
             result.flags.append("No anomalies detected.")
         else:
             result.flags.append("Insufficient data for cross-reference (unknown model identifiers).")
+            score += 10
 
+    result.fraud_score = min(score, 100)
     return result
