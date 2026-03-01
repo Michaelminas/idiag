@@ -245,3 +245,232 @@ def download_ipsw(
                 stage="error", percent=0, message=str(e)
             ))
         return None
+
+
+# ---------------------------------------------------------------------------
+# SHSH Blob Saving
+# ---------------------------------------------------------------------------
+
+def _get_tss_response(ecid: str, device_model: str, ios_version: str) -> bytes:
+    """Request SHSH2 blob from Apple TSS server via pymobiledevice3.
+
+    This is the hardware-dependent function that tests mock out.
+    """
+    from pymobiledevice3.restore.tss import TSSRequest
+
+    tss = TSSRequest()
+    tss.add_common_tags(ecid=int(ecid, 16) if ecid.startswith("0x") else int(ecid))
+    response = tss.send_receive()
+    return response
+
+
+def save_shsh_blobs(
+    ecid: str,
+    device_model: str,
+    ios_version: str,
+    blob_dir: Optional[Path] = None,
+) -> Optional[Path]:
+    """Save SHSH2 blob for a device + iOS version.
+
+    Args:
+        ecid: Device ECID (hex string, e.g. "0x1234ABCD").
+        device_model: Apple identifier, e.g. "iPhone14,2".
+        ios_version: iOS version string, e.g. "17.4".
+        blob_dir: Override blob storage directory (for testing).
+
+    Returns:
+        Path to saved blob file, or None on failure.
+    """
+    blob_dir = blob_dir or settings.shsh_blob_dir
+    blob_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{ecid}_{device_model}_{ios_version}.shsh2"
+    dest = blob_dir / filename
+
+    try:
+        blob_data = _get_tss_response(ecid, device_model, ios_version)
+        dest.write_bytes(blob_data)
+        logger.info("Saved SHSH blob: %s", filename)
+        return dest
+    except Exception as e:
+        logger.error("Failed to save SHSH blob for %s/%s: %s", device_model, ios_version, e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Device Mode Helpers (DFU / Recovery)
+# ---------------------------------------------------------------------------
+
+def _create_lockdown(udid: Optional[str] = None):
+    """Create a lockdown client. This is the mock boundary for tests."""
+    from pymobiledevice3.lockdown import create_using_usbmux
+    return create_using_usbmux(serial=udid)
+
+
+def _check_recovery_mode(udid: Optional[str] = None) -> bool:
+    """Check if any device is in recovery mode."""
+    try:
+        from pymobiledevice3.irecv import IRecv
+        IRecv()
+        return True
+    except Exception:
+        return False
+
+
+def _check_dfu_mode(udid: Optional[str] = None) -> bool:
+    """Check if any device is in DFU mode."""
+    try:
+        from pymobiledevice3.irecv import IRecv
+        device = IRecv()
+        return device.is_dfu
+    except Exception:
+        return False
+
+
+def _exit_recovery(udid: Optional[str] = None) -> bool:
+    """Exit recovery mode. This is the mock boundary for tests."""
+    try:
+        from pymobiledevice3.irecv import IRecv
+        device = IRecv()
+        device.set_autoboot(True)
+        device.reboot()
+        return True
+    except Exception as e:
+        logger.error("Failed to exit recovery: %s", e)
+        return False
+
+
+def get_device_mode(udid: Optional[str] = None) -> str:
+    """Detect current device mode: 'normal', 'recovery', 'dfu', or 'unknown'."""
+    try:
+        with _create_lockdown(udid):
+            return "normal"
+    except Exception:
+        pass
+
+    if _check_recovery_mode(udid):
+        return "recovery"
+
+    if _check_dfu_mode(udid):
+        return "dfu"
+
+    return "unknown"
+
+
+def enter_recovery_mode(udid: Optional[str] = None) -> bool:
+    """Put device into recovery mode."""
+    try:
+        with _create_lockdown(udid) as lockdown:
+            lockdown.enter_recovery()
+        logger.info("Device %s entered recovery mode", udid or "auto")
+        return True
+    except Exception as e:
+        logger.error("Failed to enter recovery mode: %s", e)
+        return False
+
+
+def enter_dfu_mode(udid: Optional[str] = None) -> bool:
+    """Guide device into DFU mode.
+
+    Note: DFU mode requires physical button combo — this puts device into
+    recovery first, then the user must hold the button combo.
+    Returns True if recovery mode was entered (DFU prep step).
+    """
+    logger.info("DFU mode requires manual button combo. Entering recovery first...")
+    return enter_recovery_mode(udid)
+
+
+def exit_recovery_mode(udid: Optional[str] = None) -> bool:
+    """Kick device out of recovery mode back to normal boot."""
+    result = _exit_recovery(udid)
+    if result:
+        logger.info("Device exited recovery mode")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Firmware Restore
+# ---------------------------------------------------------------------------
+
+def _perform_restore(udid: Optional[str], ipsw_path: Path) -> bool:
+    """Execute the actual firmware restore via pymobiledevice3.
+
+    This is the mock boundary — real implementation calls pymobiledevice3's
+    restore module.
+    """
+    try:
+        from pymobiledevice3.restore.device import Device
+        from pymobiledevice3.restore.restore import Restore
+
+        device = Device()
+        restore = Restore(ipsw_path, device)
+        restore.restore()
+        return True
+    except Exception as e:
+        logger.error("Restore failed: %s", e)
+        return False
+
+
+def restore_device(
+    udid: str,
+    model: str,
+    version: Optional[str] = None,
+    progress_callback: Optional[Callable[[RestoreProgress], None]] = None,
+) -> bool:
+    """Full firmware restore workflow.
+
+    1. Look up signed versions
+    2. Download IPSW (with progress)
+    3. Verify SHA1
+    4. Execute restore (with progress)
+
+    Args:
+        udid: Device UDID.
+        model: Apple model identifier (e.g. "iPhone14,2").
+        version: Specific iOS version to restore. If None, uses latest signed.
+        progress_callback: Called with RestoreProgress updates.
+
+    Returns:
+        True if restore succeeded, False otherwise.
+    """
+    cb = progress_callback or (lambda p: None)
+
+    # 1. Get signed versions
+    cb(RestoreProgress(stage="preparing", percent=0, message="Checking signed versions..."))
+    signed = get_signed_versions(model, signed_only=True)
+
+    if not signed:
+        cb(RestoreProgress(stage="error", percent=0, message="No signed firmware versions found"))
+        return False
+
+    # Pick version
+    if version:
+        firmware = next((f for f in signed if f.version == version), None)
+        if not firmware:
+            cb(RestoreProgress(
+                stage="error", percent=0,
+                message=f"iOS {version} is not currently signed for {model}",
+            ))
+            return False
+    else:
+        firmware = signed[0]  # latest signed
+
+    # 2. Download IPSW
+    ipsw_path = download_ipsw(firmware, progress_callback=progress_callback)
+    if not ipsw_path:
+        return False
+
+    # 3. Restore
+    cb(RestoreProgress(
+        stage="restoring", percent=0,
+        message=f"Restoring iOS {firmware.version} ({firmware.build_id})...",
+    ))
+
+    success = _perform_restore(udid, ipsw_path)
+
+    if success:
+        cb(RestoreProgress(stage="complete", percent=100, message="Restore complete"))
+    else:
+        cb(RestoreProgress(stage="error", percent=0, message="Restore failed"))
+
+    return success

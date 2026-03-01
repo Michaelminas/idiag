@@ -143,3 +143,135 @@ class TestIPSWCache:
         from app.services.firmware_manager import get_cached_ipsw
         result = get_cached_ipsw("iPhone14,2", "17.4", cache_dir=tmp_path)
         assert result is None
+
+
+class TestSHSHBlobs:
+    """Test SHSH blob save (mocked pymobiledevice3)."""
+
+    @patch("app.services.firmware_manager._get_tss_response")
+    def test_save_shsh_blob_success(self, mock_tss, tmp_path):
+        from app.services.firmware_manager import save_shsh_blobs
+
+        mock_tss.return_value = b"fake-shsh-blob-plist-data"
+
+        result = save_shsh_blobs(
+            ecid="0x1234ABCD",
+            device_model="iPhone14,2",
+            ios_version="17.4",
+            blob_dir=tmp_path,
+        )
+
+        assert result is not None
+        assert result.exists()
+        assert result.read_bytes() == b"fake-shsh-blob-plist-data"
+
+    @patch("app.services.firmware_manager._get_tss_response")
+    def test_save_shsh_blob_failure(self, mock_tss, tmp_path):
+        from app.services.firmware_manager import save_shsh_blobs
+
+        mock_tss.side_effect = Exception("TSS server error")
+
+        result = save_shsh_blobs(
+            ecid="0x1234ABCD",
+            device_model="iPhone14,2",
+            ios_version="17.4",
+            blob_dir=tmp_path,
+        )
+        assert result is None
+
+
+class TestDeviceModeHelpers:
+    """Test DFU/Recovery mode entry/exit (mocked pymobiledevice3)."""
+
+    @patch("app.services.firmware_manager._create_lockdown")
+    def test_enter_recovery_mode(self, mock_lockdown_factory):
+        from app.services.firmware_manager import enter_recovery_mode
+
+        mock_lockdown = MagicMock()
+        mock_lockdown_factory.return_value.__enter__ = MagicMock(return_value=mock_lockdown)
+        mock_lockdown_factory.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = enter_recovery_mode("test-udid")
+        assert result is True
+
+    @patch("app.services.firmware_manager._create_lockdown")
+    def test_enter_recovery_mode_failure(self, mock_lockdown_factory):
+        from app.services.firmware_manager import enter_recovery_mode
+
+        mock_lockdown_factory.side_effect = Exception("No device")
+        result = enter_recovery_mode("test-udid")
+        assert result is False
+
+    @patch("app.services.firmware_manager._exit_recovery")
+    def test_exit_recovery_mode(self, mock_exit):
+        from app.services.firmware_manager import exit_recovery_mode
+
+        mock_exit.return_value = True
+        result = exit_recovery_mode("test-udid")
+        assert result is True
+
+    def test_get_device_mode_normal(self):
+        from app.services.firmware_manager import get_device_mode
+
+        with patch("app.services.firmware_manager._create_lockdown") as mock_ld:
+            mock_lockdown = MagicMock()
+            mock_ld.return_value.__enter__ = MagicMock(return_value=mock_lockdown)
+            mock_ld.return_value.__exit__ = MagicMock(return_value=False)
+            mode = get_device_mode("test-udid")
+            assert mode == "normal"
+
+    def test_get_device_mode_no_device(self):
+        from app.services.firmware_manager import get_device_mode
+
+        with patch("app.services.firmware_manager._create_lockdown") as mock_ld:
+            mock_ld.side_effect = Exception("Not found")
+            with patch("app.services.firmware_manager._check_recovery_mode") as mock_rec:
+                mock_rec.return_value = False
+                with patch("app.services.firmware_manager._check_dfu_mode") as mock_dfu:
+                    mock_dfu.return_value = False
+                    mode = get_device_mode("test-udid")
+                    assert mode == "unknown"
+
+
+class TestRestore:
+    """Test firmware restore orchestration (mocked)."""
+
+    @patch("app.services.firmware_manager._perform_restore")
+    @patch("app.services.firmware_manager.download_ipsw")
+    @patch("app.services.firmware_manager.get_signed_versions")
+    def test_restore_device_success(self, mock_signed, mock_download, mock_restore, tmp_path):
+        from app.services.firmware_manager import restore_device
+        from app.models.firmware import FirmwareVersion
+
+        mock_signed.return_value = [FirmwareVersion(
+            version="17.4", build_id="21E219", model="iPhone14,2",
+            url="https://example.com/fw.ipsw", sha1="abc123", size_bytes=1000, signed=True,
+        )]
+        fake_ipsw = tmp_path / "fw.ipsw"
+        fake_ipsw.write_bytes(b"firmware")
+        mock_download.return_value = fake_ipsw
+        mock_restore.return_value = True
+
+        progress_log = []
+        result = restore_device(
+            udid="test-udid",
+            model="iPhone14,2",
+            progress_callback=lambda p: progress_log.append(p),
+        )
+        assert result is True
+        assert any(p.stage == "restoring" for p in progress_log)
+
+    @patch("app.services.firmware_manager.get_signed_versions")
+    def test_restore_no_signed_version(self, mock_signed):
+        from app.services.firmware_manager import restore_device
+
+        mock_signed.return_value = []
+
+        progress_log = []
+        result = restore_device(
+            udid="test-udid",
+            model="iPhone14,2",
+            progress_callback=lambda p: progress_log.append(p),
+        )
+        assert result is False
+        assert any(p.stage == "error" for p in progress_log)
