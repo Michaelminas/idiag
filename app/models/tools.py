@@ -10,7 +10,7 @@ class BypassResult(BaseModel):
     """Result of an activation-lock or passcode bypass attempt."""
 
     success: bool
-    tool: Literal["checkra1n", "broque", "ssh_ramdisk"]
+    tool: Literal["checkra1n", "broque", "ssh_ramdisk", "futurerestore"]
     error: Optional[str] = None
     message: Optional[str] = None
     timestamp: Optional[datetime] = None
