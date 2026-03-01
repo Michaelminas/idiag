@@ -78,3 +78,68 @@ class TestGetSignedVersions:
 
         versions = get_signed_versions("iPhone14,2")
         assert versions == []
+
+
+class TestIPSWCache:
+    """Test IPSW download and LRU cache logic."""
+
+    def test_list_cached_empty(self, tmp_path):
+        from app.services.firmware_manager import list_cached_ipsw
+        entries = list_cached_ipsw(cache_dir=tmp_path)
+        assert entries == []
+
+    def test_cache_entry_creation_and_listing(self, tmp_path):
+        """Simulate a cached IPSW and verify listing."""
+        from app.services.firmware_manager import list_cached_ipsw, _ipsw_filename
+
+        fname = _ipsw_filename("iPhone14,2", "17.4", "21E219")
+        fpath = tmp_path / fname
+        fpath.write_bytes(b"fake ipsw content")
+
+        entries = list_cached_ipsw(cache_dir=tmp_path)
+        assert len(entries) == 1
+        assert entries[0].model == "iPhone14,2"
+        assert entries[0].version == "17.4"
+
+    def test_evict_cache_oldest_first(self, tmp_path):
+        """LRU eviction should remove oldest files first."""
+        import time
+        from app.services.firmware_manager import evict_cache, _ipsw_filename
+
+        # Create 3 "IPSW" files with different timestamps
+        for i, (model, ver) in enumerate([
+            ("iPhone14,2", "17.3"), ("iPhone14,2", "17.4"), ("iPhone15,2", "17.4")
+        ]):
+            fpath = tmp_path / _ipsw_filename(model, ver, f"BUILD{i}")
+            fpath.write_bytes(b"x" * 1000)
+            time.sleep(0.05)  # ensure different mtime
+
+        # Evict with max_bytes = 2500 (keeps 2 of 3)
+        evict_cache(cache_dir=tmp_path, max_bytes=2500)
+        remaining = list(tmp_path.glob("*.ipsw"))
+        assert len(remaining) == 2
+
+    def test_verify_sha1(self, tmp_path):
+        """SHA1 verification of a downloaded file."""
+        from app.services.firmware_manager import verify_sha1
+
+        fpath = tmp_path / "test.ipsw"
+        content = b"test firmware content"
+        fpath.write_bytes(content)
+
+        import hashlib
+        expected = hashlib.sha1(content).hexdigest()
+        assert verify_sha1(fpath, expected) is True
+        assert verify_sha1(fpath, "wrong_hash") is False
+
+    def test_get_cached_ipsw_found(self, tmp_path):
+        from app.services.firmware_manager import get_cached_ipsw, _ipsw_filename
+        fname = _ipsw_filename("iPhone14,2", "17.4", "21E219")
+        (tmp_path / fname).write_bytes(b"data")
+        result = get_cached_ipsw("iPhone14,2", "17.4", cache_dir=tmp_path)
+        assert result is not None
+
+    def test_get_cached_ipsw_not_found(self, tmp_path):
+        from app.services.firmware_manager import get_cached_ipsw
+        result = get_cached_ipsw("iPhone14,2", "17.4", cache_dir=tmp_path)
+        assert result is None

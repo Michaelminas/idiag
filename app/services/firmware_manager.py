@@ -61,3 +61,187 @@ def get_signed_versions(
     except Exception as e:
         logger.error("Failed to fetch signed versions for %s: %s", model_identifier, e)
         return []
+
+
+# ---------------------------------------------------------------------------
+# IPSW Cache
+# ---------------------------------------------------------------------------
+
+def _ipsw_filename(model: str, version: str, build_id: str) -> str:
+    """Deterministic filename: iPhone14_2_17.4_21E219.ipsw"""
+    safe_model = model.replace(",", "_")
+    return f"{safe_model}_{version}_{build_id}.ipsw"
+
+
+def _parse_ipsw_filename(filename: str) -> tuple[str, str, str]:
+    """Extract (model, version, build_id) from cache filename."""
+    stem = filename.rsplit(".", 1)[0]  # remove .ipsw
+    parts = stem.split("_")
+    # Find the version part (first segment containing a dot)
+    version_idx = None
+    for i, part in enumerate(parts):
+        if "." in part:
+            version_idx = i
+            break
+    if version_idx is None or version_idx < 1:
+        return "", "", ""
+    # Everything before version_idx is the model (rejoin, replace first _ with ,)
+    model_parts = parts[:version_idx]
+    model = "_".join(model_parts)
+    # Restore first underscore to comma: iPhone14_2 -> iPhone14,2
+    model = model.replace("_", ",", 1)
+    version = parts[version_idx]
+    build_id = "_".join(parts[version_idx + 1:]) if version_idx + 1 < len(parts) else ""
+    return model, version, build_id
+
+
+def list_cached_ipsw(cache_dir: Optional[Path] = None) -> list[IPSWCacheEntry]:
+    """List all IPSW files in the cache directory."""
+    cache_dir = cache_dir or settings.ipsw_cache_dir
+    if not cache_dir.exists():
+        return []
+
+    entries = []
+    for fpath in sorted(cache_dir.glob("*.ipsw"), key=lambda p: p.stat().st_mtime):
+        model, version, build_id = _parse_ipsw_filename(fpath.name)
+        stat = fpath.stat()
+        entries.append(IPSWCacheEntry(
+            path=str(fpath),
+            model=model,
+            version=version,
+            build_id=build_id,
+            downloaded_at=datetime.fromtimestamp(stat.st_mtime),
+            size_bytes=stat.st_size,
+        ))
+    return entries
+
+
+def evict_cache(
+    cache_dir: Optional[Path] = None, max_bytes: Optional[int] = None
+) -> int:
+    """Remove oldest IPSW files until total cache size <= max_bytes.
+
+    Returns number of files removed.
+    """
+    cache_dir = cache_dir or settings.ipsw_cache_dir
+    if max_bytes is None:
+        max_bytes = int(settings.ipsw_cache_max_gb * 1_073_741_824)
+
+    if not cache_dir.exists():
+        return 0
+
+    # Sort by mtime ascending (oldest first)
+    files = sorted(cache_dir.glob("*.ipsw"), key=lambda p: p.stat().st_mtime)
+    total = sum(f.stat().st_size for f in files)
+    removed = 0
+
+    while total > max_bytes and files:
+        oldest = files.pop(0)
+        total -= oldest.stat().st_size
+        oldest.unlink()
+        removed += 1
+        logger.info("Evicted cached IPSW: %s", oldest.name)
+
+    return removed
+
+
+def get_cached_ipsw(
+    model: str, version: str, cache_dir: Optional[Path] = None
+) -> Optional[Path]:
+    """Look up a cached IPSW by model + version. Returns path or None."""
+    cache_dir = cache_dir or settings.ipsw_cache_dir
+    if not cache_dir.exists():
+        return None
+    for fpath in cache_dir.glob("*.ipsw"):
+        m, v, _ = _parse_ipsw_filename(fpath.name)
+        if m == model and v == version:
+            return fpath
+    return None
+
+
+def verify_sha1(file_path: Path, expected_sha1: str) -> bool:
+    """Verify a file's SHA1 checksum."""
+    sha1 = hashlib.sha1()
+    with open(file_path, "rb") as f:
+        while chunk := f.read(65536):
+            sha1.update(chunk)
+    return sha1.hexdigest().lower() == expected_sha1.lower()
+
+
+def download_ipsw(
+    firmware: FirmwareVersion,
+    cache_dir: Optional[Path] = None,
+    progress_callback: Optional[Callable[[RestoreProgress], None]] = None,
+) -> Optional[Path]:
+    """Download an IPSW file from Apple CDN, verify SHA1, store in cache.
+
+    Args:
+        firmware: FirmwareVersion with url, sha1, size_bytes populated.
+        cache_dir: Override cache directory (for testing).
+        progress_callback: Called with RestoreProgress updates.
+
+    Returns:
+        Path to downloaded file, or None on failure.
+    """
+    cache_dir = cache_dir or settings.ipsw_cache_dir
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = _ipsw_filename(firmware.model, firmware.version, firmware.build_id)
+    dest = cache_dir / filename
+
+    # Already cached?
+    if dest.exists() and verify_sha1(dest, firmware.sha1):
+        logger.info("IPSW already cached: %s", filename)
+        return dest
+
+    if progress_callback:
+        progress_callback(RestoreProgress(
+            stage="downloading", percent=0, message=f"Downloading {filename}..."
+        ))
+
+    try:
+        with httpx.stream("GET", firmware.url, timeout=None, follow_redirects=True) as resp:
+            resp.raise_for_status()
+            total = firmware.size_bytes or int(resp.headers.get("content-length", 0))
+            downloaded = 0
+
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_bytes(chunk_size=1_048_576):  # 1MB chunks
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback and total > 0:
+                        pct = min(int(downloaded / total * 100), 99)
+                        progress_callback(RestoreProgress(
+                            stage="downloading", percent=pct,
+                            message=f"Downloading: {downloaded // 1_048_576}MB / {total // 1_048_576}MB",
+                        ))
+
+        # Verify SHA1
+        if progress_callback:
+            progress_callback(RestoreProgress(
+                stage="verifying", percent=99, message="Verifying SHA1 checksum..."
+            ))
+
+        if firmware.sha1 and not verify_sha1(dest, firmware.sha1):
+            logger.error("SHA1 mismatch for %s", filename)
+            dest.unlink(missing_ok=True)
+            if progress_callback:
+                progress_callback(RestoreProgress(
+                    stage="error", percent=0, message="SHA1 verification failed"
+                ))
+            return None
+
+        # Evict old files if over budget
+        evict_cache(cache_dir=cache_dir)
+
+        logger.info("Downloaded and verified: %s", filename)
+        return dest
+
+    except Exception as e:
+        logger.error("IPSW download failed for %s: %s", filename, e)
+        dest.unlink(missing_ok=True)
+        if progress_callback:
+            progress_callback(RestoreProgress(
+                stage="error", percent=0, message=str(e)
+            ))
+        return None
