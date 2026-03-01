@@ -24,7 +24,11 @@ def _load_capabilities() -> dict[str, DeviceCapability]:
     return {k: DeviceCapability(**v) for k, v in raw.items()}
 
 
-CAPABILITIES = _load_capabilities()
+try:
+    CAPABILITIES = _load_capabilities()
+except Exception:
+    logger.error("Failed to load device capabilities, using empty map")
+    CAPABILITIES = {}
 
 
 def get_capability(product_type: str) -> Optional[DeviceCapability]:

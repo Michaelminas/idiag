@@ -45,6 +45,16 @@ class TestGradeCrashes:
         g = grade_crashes(CrashAnalysis(total_reports=50, max_severity=5))
         assert g.grade == "D"
 
+    def test_hardware_adjacent_many(self):
+        # severity 4 with >10 crashes -> D
+        g = grade_crashes(CrashAnalysis(total_reports=15, max_severity=4))
+        assert g.grade == "D"
+
+    def test_moderate_no_critical(self):
+        # 15 crashes, low severity -> C
+        g = grade_crashes(CrashAnalysis(total_reports=15, max_severity=2))
+        assert g.grade == "C"
+
 
 class TestCalculateGrade:
     def _make_diagnostics(self, health: float = 95.0, original: bool = True):

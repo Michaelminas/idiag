@@ -67,18 +67,21 @@ def grade_parts(all_original: bool, replaced_count: int = 0) -> ComponentGrade:
 
 
 def grade_crashes(analysis: CrashAnalysis) -> ComponentGrade:
+    """Grade crash history per design spec:
+    A: 0-2 minor | B: 3-10 | C: 11-30 or 1 critical | D: 30+ or hardware-level
+    """
     total = analysis.total_reports
-    has_critical = analysis.max_severity >= 5
-    has_hardware = analysis.max_severity >= 4
+    has_critical = analysis.max_severity >= 5  # severity 5 = critical hardware
+    has_hardware = analysis.max_severity >= 4  # severity 4 = hardware-adjacent
 
-    if total <= 2 and not has_critical:
-        g, detail = "A", f"{total} minor crashes"
-    elif total <= 10 and not has_critical:
-        g, detail = "B", f"{total} crashes, no critical"
-    elif total <= 30 or (has_critical and not has_hardware):
+    if total > 30 or (has_hardware and total > 10):
+        g, detail = "D", f"{total} crashes, hardware-level severity {analysis.max_severity}"
+    elif has_critical or (total > 10):
         g, detail = "C", f"{total} crashes, severity {analysis.max_severity}"
+    elif total <= 2:
+        g, detail = "A", f"{total} minor crashes"
     else:
-        g, detail = "D", f"{total} crashes, hardware-level severity"
+        g, detail = "B", f"{total} crashes, no critical"
     return ComponentGrade(
         component="crashes", grade=g, score=GRADE_SCORES[g],
         weight=WEIGHTS["crashes"], details=detail,

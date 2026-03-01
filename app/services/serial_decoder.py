@@ -228,6 +228,9 @@ def cross_reference_check(
             result.flags.append(f"Invalid IMEI: {'; '.join(imei_result.notes)}")
 
     if not result.flags:
-        result.flags.append("No anomalies detected.")
+        if model_entry or pt_name:
+            result.flags.append("No anomalies detected.")
+        else:
+            result.flags.append("Insufficient data for cross-reference (unknown model identifiers).")
 
     return result

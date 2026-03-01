@@ -112,3 +112,4 @@ class TestCrossReferenceCheck:
             product_type="iPhone99,1",  # unknown
         )
         assert not result.is_suspicious
+        assert any("Insufficient data" in f for f in result.flags)

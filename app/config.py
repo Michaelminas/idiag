@@ -1,5 +1,6 @@
 """Application configuration."""
 
+import os
 from pathlib import Path
 from pydantic import BaseModel
 
@@ -21,7 +22,7 @@ class Settings(BaseModel):
     device_capabilities_path: Path = Path("")
 
     # SICKW API
-    sickw_api_key: str = ""
+    sickw_api_key: str = os.environ.get("SICKW_API_KEY", "")
     sickw_base_url: str = "https://sickw.com/api.php"
     sickw_default_service: int = 61  # iPhone Carrier + FMI + Blacklist bundle
 

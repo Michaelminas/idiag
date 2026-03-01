@@ -114,8 +114,13 @@ async def run_verification(udid: Optional[str] = None, imei: str = "") -> Verifi
     # Local MDM check
     result.mdm_enrolled, result.mdm_organization = check_mdm_local(udid)
 
-    # SICKW API check (if IMEI available and API key configured)
+    # SICKW API check (if valid IMEI available and API key configured)
     if imei and settings.sickw_api_key:
+        from app.services.serial_decoder import validate_imei
+        imei_check = validate_imei(imei)
+        if not imei_check.is_valid:
+            logger.warning("Skipping SICKW check — invalid IMEI: %s", imei)
+            return result
         sickw_raw = await check_imei_sickw(imei)
         if "error" not in sickw_raw:
             parsed = _parse_sickw_result(sickw_raw)

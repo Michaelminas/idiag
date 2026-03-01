@@ -26,7 +26,11 @@ def _load_patterns() -> list[CrashPattern]:
     return [CrashPattern(**p) for p in raw]
 
 
-PATTERNS = _load_patterns()
+try:
+    PATTERNS = _load_patterns()
+except Exception:
+    logger.error("Failed to load crash patterns, using empty list")
+    PATTERNS = []
 
 
 def analyze_crash_text(text: str, filename: str = "") -> Optional[CrashMatch]:
@@ -46,8 +50,9 @@ def analyze_device(udid: Optional[str] = None) -> CrashAnalysis:
     """Pull all crash reports from a device and analyze them."""
     result = CrashAnalysis()
 
+    tmpdir_handle = None
     try:
-        crash_files = _pull_crash_reports(udid)
+        crash_files, tmpdir_handle = _pull_crash_reports(udid)
     except Exception as e:
         logger.error("Failed to pull crash reports: %s", e)
         result.summary = f"Failed to pull crash reports: {e}"
@@ -57,21 +62,25 @@ def analyze_device(udid: Optional[str] = None) -> CrashAnalysis:
     subsystem_counts: dict[str, int] = {}
     max_severity = 0
 
-    for filepath in crash_files:
-        result.total_reports += 1
-        try:
-            text = filepath.read_text(errors="replace")
-        except Exception:
-            continue
+    try:
+        for filepath in crash_files:
+            result.total_reports += 1
+            try:
+                text = filepath.read_text(errors="replace")
+            except Exception:
+                continue
 
-        match = analyze_crash_text(text, filepath.name)
-        if match:
-            matches.append(match)
-            result.matched_reports += 1
-            subsystem_counts[match.subsystem] = subsystem_counts.get(match.subsystem, 0) + 1
-            max_severity = max(max_severity, match.severity)
-        else:
-            result.unmatched_reports += 1
+            match = analyze_crash_text(text, filepath.name)
+            if match:
+                matches.append(match)
+                result.matched_reports += 1
+                subsystem_counts[match.subsystem] = subsystem_counts.get(match.subsystem, 0) + 1
+                max_severity = max(max_severity, match.severity)
+            else:
+                result.unmatched_reports += 1
+    finally:
+        if tmpdir_handle:
+            tmpdir_handle.cleanup()
 
     result.matches = matches
     result.subsystem_counts = subsystem_counts
@@ -82,20 +91,25 @@ def analyze_device(udid: Optional[str] = None) -> CrashAnalysis:
     return result
 
 
-def _pull_crash_reports(udid: Optional[str] = None) -> list[Path]:
-    """Pull crash reports from device to a temp directory."""
+def _pull_crash_reports(udid: Optional[str] = None) -> tuple[list[Path], tempfile.TemporaryDirectory]:
+    """Pull crash reports from device to a temp directory.
+
+    Returns (file_list, tmpdir_handle). Caller must keep tmpdir_handle alive
+    while reading files, then call tmpdir_handle.cleanup().
+    """
     from pymobiledevice3.lockdown import create_using_usbmux
     from pymobiledevice3.services.crash_reports import CrashReportsManager
 
-    tmpdir = Path(tempfile.mkdtemp(prefix="idiag_crashes_"))
+    tmpdir = tempfile.TemporaryDirectory(prefix="idiag_crashes_")
+    tmppath = Path(tmpdir.name)
 
     with create_using_usbmux(serial=udid) as lockdown:
         with CrashReportsManager(lockdown) as mgr:
-            mgr.pull(out=str(tmpdir))
+            mgr.pull(out=str(tmppath))
 
     # Collect all .ips and .crash files
-    files = list(tmpdir.rglob("*.ips")) + list(tmpdir.rglob("*.crash"))
-    return files
+    files = list(tmppath.rglob("*.ips")) + list(tmppath.rglob("*.crash"))
+    return files, tmpdir
 
 
 def _calculate_risk_score(matches: list[CrashMatch], total: int) -> float:

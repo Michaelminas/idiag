@@ -1,6 +1,6 @@
 """Inventory API routes."""
 
-from typing import Optional
+import threading
 
 from fastapi import APIRouter, HTTPException
 
@@ -9,14 +9,17 @@ from app.services.inventory_db import InventoryDB
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
 
-_db: Optional[InventoryDB] = None
+_db_lock = threading.Lock()
+_db: InventoryDB | None = None
 
 
 def get_db() -> InventoryDB:
     global _db
     if _db is None:
-        _db = InventoryDB()
-        _db.init_db()
+        with _db_lock:
+            if _db is None:  # double-check after acquiring lock
+                _db = InventoryDB()
+                _db.init_db()
     return _db
 
 
