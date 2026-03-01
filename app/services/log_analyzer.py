@@ -46,8 +46,17 @@ def analyze_crash_text(text: str, filename: str = "") -> Optional[CrashMatch]:
     return None
 
 
-def analyze_device(udid: Optional[str] = None) -> CrashAnalysis:
-    """Pull all crash reports from a device and analyze them."""
+def analyze_device(
+    udid: Optional[str] = None,
+    history: Optional[list[dict[str, int]]] = None,
+) -> CrashAnalysis:
+    """Pull all crash reports from a device and analyze them.
+
+    Args:
+        udid: Device UDID (None = first connected device).
+        history: List of previous subsystem_counts dicts (oldest first)
+                 for trend computation. Pass from DB crash history.
+    """
     result = CrashAnalysis()
 
     tmpdir_handle = None
@@ -86,6 +95,17 @@ def analyze_device(udid: Optional[str] = None) -> CrashAnalysis:
     result.subsystem_counts = subsystem_counts
     result.max_severity = max_severity
     result.risk_score = _calculate_risk_score(matches, result.total_reports)
+
+    # Compute trends and predicted failures when history is available
+    if history:
+        severity_map: dict[str, int] = {}
+        for m in matches:
+            severity_map[m.subsystem] = max(severity_map.get(m.subsystem, 0), m.severity)
+        result.trends = compute_trends(subsystem_counts, history)
+        result.predicted_failures = compute_predicted_failures(
+            result.trends, subsystem_counts, severity_map
+        )
+
     result.summary = _generate_summary(result)
 
     return result

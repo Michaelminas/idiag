@@ -11,7 +11,7 @@ def export_devices_csv(devices: list[DeviceRecord]) -> str:
     """Export device list to CSV string."""
     output = StringIO()
     fields = ["id", "udid", "serial", "imei", "model", "ios_version",
-              "grade", "status", "buy_price", "notes", "created_at", "updated_at"]
+              "grade", "status", "buy_price", "sell_price", "notes", "created_at", "updated_at"]
     writer = csv.DictWriter(output, fieldnames=fields)
     writer.writeheader()
     for d in devices:

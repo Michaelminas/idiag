@@ -34,13 +34,11 @@ def list_photos(device_id: int) -> list[PhotoRecord]:
 
 @router.get("/file/{photo_id}")
 def get_photo_file(photo_id: int):
-    db = get_db()
-    with db._lock:
-        row = db.conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
-    if not row:
+    photo = get_db().get_photo_by_id(photo_id)
+    if not photo:
         raise HTTPException(status_code=404, detail="Photo not found")
 
-    path = _pm.get_path(row["filepath"])
+    path = _pm.get_path(photo.filepath)
     if not path:
         raise HTTPException(status_code=404, detail="Photo file missing")
     return FileResponse(path)
@@ -48,12 +46,10 @@ def get_photo_file(photo_id: int):
 
 @router.delete("/{photo_id}")
 def delete_photo(photo_id: int) -> dict:
-    db = get_db()
-    with db._lock:
-        row = db.conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
-    if not row:
+    photo = get_db().get_photo_by_id(photo_id)
+    if not photo:
         raise HTTPException(status_code=404, detail="Photo not found")
 
-    _pm.delete(row["filepath"])
-    db.delete_photo(photo_id)
+    _pm.delete(photo.filepath)
+    get_db().delete_photo(photo_id)
     return {"deleted": True}

@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.api.inventory import get_db
 from app.models.crash import CrashAnalysis
 from app.models.diagnostic import DiagnosticResult
 from app.models.grading import DeviceGrade
@@ -15,6 +16,28 @@ from app.services import device_service, diagnostic_engine, log_analyzer, verifi
 from app.services.grading_engine import calculate_grade
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
+
+
+def _get_crash_history(udid: str) -> list[dict[str, int]]:
+    """Build subsystem_counts history from stored crash reports for a device."""
+    db = get_db()
+    device = db.get_device_by_udid(udid)
+    if not device or not device.id:
+        return []
+    rows = db.list_crash_history(device.id)
+    if not rows:
+        return []
+    # Group by timestamp to reconstruct per-scan subsystem counts
+    scans: dict[str, dict[str, int]] = {}
+    for row in rows:
+        ts = row.get("timestamp", "")
+        subsystem = row.get("subsystem", "")
+        count = row.get("count", 1)
+        if ts not in scans:
+            scans[ts] = {}
+        scans[ts][subsystem] = scans[ts].get(subsystem, 0) + count
+    # Return sorted by timestamp (oldest first)
+    return [scans[ts] for ts in sorted(scans.keys())]
 
 
 @router.get("/run")
@@ -28,7 +51,8 @@ async def run_diagnostics(udid: str | None = None) -> DiagnosticResult:
 @router.get("/crashes/{udid}")
 async def analyze_crashes(udid: str | None = None) -> CrashAnalysis:
     """Pull and analyze crash reports from device."""
-    return await asyncio.to_thread(log_analyzer.analyze_device, udid)
+    history = _get_crash_history(udid) if udid else []
+    return await asyncio.to_thread(log_analyzer.analyze_device, udid, history)
 
 
 class GradeRequest(BaseModel):
@@ -53,7 +77,8 @@ async def calculate_device_grade_live(
 ) -> DeviceGrade:
     """Run all diagnostics from scratch and compute the overall device grade."""
     diag = await asyncio.to_thread(diagnostic_engine.run_diagnostics, udid)
-    crashes = await asyncio.to_thread(log_analyzer.analyze_device, udid)
+    history = _get_crash_history(udid)
+    crashes = await asyncio.to_thread(log_analyzer.analyze_device, udid, history)
     verif = await verification_service.run_verification(udid=udid, imei=imei)
     return calculate_grade(diag, crashes, verif, cosmetic)
 
@@ -66,7 +91,8 @@ async def get_device_snapshot(udid: str, cosmetic: str | None = None) -> DeviceS
         raise HTTPException(status_code=404, detail="Device not found or connection failed")
 
     diag = await asyncio.to_thread(diagnostic_engine.run_diagnostics, udid)
-    crashes = await asyncio.to_thread(log_analyzer.analyze_device, udid)
+    history = _get_crash_history(udid)
+    crashes = await asyncio.to_thread(log_analyzer.analyze_device, udid, history)
 
     verif = None
     if info.imei:

@@ -292,6 +292,16 @@ class InventoryDB:
                 filepath=r["filepath"], label=r["label"], created_at=r["created_at"],
             ) for r in rows]
 
+    def get_photo_by_id(self, photo_id: int) -> Optional[PhotoRecord]:
+        with self._lock:
+            row = self.conn.execute("SELECT * FROM photos WHERE id=?", (photo_id,)).fetchone()
+            if not row:
+                return None
+            return PhotoRecord(
+                id=row["id"], device_id=row["device_id"], filename=row["filename"],
+                filepath=row["filepath"], label=row["label"], created_at=row["created_at"],
+            )
+
     def delete_photo(self, photo_id: int) -> bool:
         with self._lock:
             cur = self.conn.execute("DELETE FROM photos WHERE id=?", (photo_id,))

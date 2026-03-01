@@ -1,7 +1,6 @@
 """Firmware management API routes — IPSW, signing, SHSH, restore, wipe."""
 
 import asyncio
-import threading
 from datetime import datetime
 from typing import Optional
 
@@ -9,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.api.inventory import get_db
 from app.models.firmware import (
     FirmwareVersion,
     IPSWCacheEntry,
@@ -16,22 +16,8 @@ from app.models.firmware import (
     WipeRecord,
 )
 from app.services import firmware_manager, wipe_service
-from app.services.inventory_db import InventoryDB
 
 router = APIRouter(prefix="/api/firmware", tags=["firmware"])
-
-_db_lock = threading.Lock()
-_db: InventoryDB | None = None
-
-
-def get_db() -> InventoryDB:
-    global _db
-    if _db is None:
-        with _db_lock:
-            if _db is None:  # double-check after acquiring lock
-                _db = InventoryDB()
-                _db.init_db()
-    return _db
 
 
 # -- Request models --

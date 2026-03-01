@@ -14,43 +14,36 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 @router.get("/pdf/{device_id}")
 def get_pdf_report(device_id: int):
-    device = get_db().get_device_by_id(device_id)
+    db = get_db()
+    device = db.get_device_by_id(device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
-    # Fetch latest diagnostics + verification from DB
-    db = get_db()
-    with db._lock:
-        diag_row = db.conn.execute(
-            "SELECT * FROM diagnostics WHERE device_id=? ORDER BY timestamp DESC LIMIT 1",
-            (device_id,),
-        ).fetchone()
-        verif_row = db.conn.execute(
-            "SELECT * FROM verifications WHERE device_id=? ORDER BY timestamp DESC LIMIT 1",
-            (device_id,),
-        ).fetchone()
-
-    # Build lightweight objects for the template
+    # Fetch latest diagnostics + verification from DB via public methods
     from app.models.diagnostic import BatteryInfo, DiagnosticResult, StorageInfo, PartsOriginality
     from app.models.verification import VerificationResult
 
     diagnostics = None
-    if diag_row:
+    diag_rows = db.list_diagnostics(device_id)
+    if diag_rows:
+        d = diag_rows[0]  # newest first
         diagnostics = DiagnosticResult(
-            battery=BatteryInfo(health_percent=diag_row["battery_health"] or 0,
-                                cycle_count=diag_row["battery_cycles"] or 0),
-            parts=PartsOriginality(all_original=bool(diag_row["parts_original"])),
-            storage=StorageInfo(total_gb=diag_row["storage_total"] or 0,
-                                used_gb=diag_row["storage_used"] or 0),
+            battery=BatteryInfo(health_percent=d.get("battery_health") or 0,
+                                cycle_count=d.get("battery_cycles") or 0),
+            parts=PartsOriginality(all_original=bool(d.get("parts_original"))),
+            storage=StorageInfo(total_gb=d.get("storage_total") or 0,
+                                used_gb=d.get("storage_used") or 0),
         )
 
     verification = None
-    if verif_row:
+    verif_rows = db.list_verifications(device_id)
+    if verif_rows:
+        v = verif_rows[0]  # newest first
         verification = VerificationResult(
-            blacklist_status=verif_row["blacklist_status"] or "unknown",
-            fmi_status=verif_row["fmi_status"] or "unknown",
-            carrier=verif_row["carrier"] or "",
-            carrier_locked=bool(verif_row["carrier_locked"]),
+            blacklist_status=v.get("blacklist_status") or "unknown",
+            fmi_status=v.get("fmi_status") or "unknown",
+            carrier=v.get("carrier") or "",
+            carrier_locked=bool(v.get("carrier_locked")),
         )
 
     pdf_bytes = generate_pdf(device, diagnostics, verification, device.grade)
