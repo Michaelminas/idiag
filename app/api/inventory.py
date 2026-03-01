@@ -47,3 +47,27 @@ def delete_device(device_id: int) -> dict:
     if get_db().delete_device(device_id):
         return {"deleted": True}
     raise HTTPException(status_code=404, detail="Device not found")
+
+
+@router.get("/devices/{device_id}/diagnostics")
+def list_device_diagnostics(device_id: int) -> list[dict]:
+    record = get_db().get_device_by_id(device_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return get_db().list_diagnostics(device_id)
+
+
+@router.get("/devices/{device_id}/verifications")
+def list_device_verifications(device_id: int) -> list[dict]:
+    record = get_db().get_device_by_id(device_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return get_db().list_verifications(device_id)
+
+
+@router.get("/devices/{device_id}/crashes")
+def list_device_crashes(device_id: int) -> list[dict]:
+    record = get_db().get_device_by_id(device_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return get_db().list_crash_history(device_id)

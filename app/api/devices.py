@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException
 
-from app.models.device import DeviceInfo
+from app.models.device import DeviceCapability, DeviceInfo
 from app.services import device_service
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
@@ -22,3 +22,12 @@ def get_info(udid: str | None = None) -> DeviceInfo:
     if not info:
         raise HTTPException(status_code=404, detail="No device found or connection failed")
     return info
+
+
+@router.get("/capabilities/{product_type}")
+def get_capabilities(product_type: str) -> DeviceCapability:
+    """Get device capabilities by ProductType (e.g. iPhone14,2)."""
+    cap = device_service.get_capability(product_type)
+    if not cap:
+        raise HTTPException(status_code=404, detail=f"No capability data for {product_type}")
+    return cap
