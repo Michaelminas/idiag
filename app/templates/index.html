@@ -167,23 +167,33 @@
 
             <!-- Tab: Pricing -->
             <div id="panel-pricing" class="hidden">
-                <div class="bg-white rounded-lg shadow-md p-6 max-w-lg">
-                    <h3 class="font-semibold text-gray-700 mb-4 border-b pb-2">Pricing</h3>
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm text-gray-500 mb-1">Buy Price ($)</label>
-                            <input type="number" id="buy-price" step="0.01" min="0" placeholder="0.00"
-                                   class="w-full border rounded px-3 py-2 text-sm" oninput="calcProfit()">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Market Price Lookup -->
+                    <div class="bg-white rounded-lg shadow-md p-6">
+                        <h3 class="font-semibold text-gray-700 mb-4 border-b pb-2">Market Price</h3>
+                        <div id="market-price-content" class="text-center text-gray-400 py-4">
+                            Connect a device to see market pricing
                         </div>
-                        <div>
-                            <label class="block text-sm text-gray-500 mb-1">Sell Price ($)</label>
-                            <input type="number" id="sell-price" step="0.01" min="0" placeholder="0.00"
-                                   class="w-full border rounded px-3 py-2 text-sm" oninput="calcProfit()">
-                        </div>
-                        <div class="border-t pt-3">
-                            <div class="flex justify-between items-center">
-                                <span class="text-gray-500 text-sm">Estimated Profit</span>
-                                <span id="profit-display" class="text-2xl font-bold text-gray-300">--</span>
+                    </div>
+                    <!-- Manual Pricing / Profit -->
+                    <div class="bg-white rounded-lg shadow-md p-6">
+                        <h3 class="font-semibold text-gray-700 mb-4 border-b pb-2">Profit Calculator</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm text-gray-500 mb-1">Buy Price ($)</label>
+                                <input type="number" id="buy-price" step="0.01" min="0" placeholder="0.00"
+                                       class="w-full border rounded px-3 py-2 text-sm" oninput="calcProfit()">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-gray-500 mb-1">Sell Price ($)</label>
+                                <input type="number" id="sell-price" step="0.01" min="0" placeholder="0.00"
+                                       class="w-full border rounded px-3 py-2 text-sm" oninput="calcProfit()">
+                            </div>
+                            <div class="border-t pt-3">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-gray-500 text-sm">Estimated Profit</span>
+                                    <span id="profit-display" class="text-2xl font-bold text-gray-300">--</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -307,6 +317,14 @@
             // Render grade
             const grade = snapshot.grade;
             if (grade) renderGrade(grade);
+
+            // Fetch market pricing
+            const model = info.product_type || '';
+            const storageGb = diag && diag.storage ? Math.round(diag.storage.total_gb) : 0;
+            const gradeStr = grade ? grade.overall_grade : '';
+            if (model || info.device_name) {
+                fetchMarketPrice(info.device_name || model, storageGb, gradeStr);
+            }
 
         } catch (e) {
             console.error('Snapshot error:', e);
@@ -502,6 +520,44 @@
     }
 
     // -- Pricing Tab --
+
+    function fetchMarketPrice(model, storageGb, grade) {
+        const panel = el('market-price-content');
+        panel.innerHTML = '<div class="text-gray-400">Loading market data...</div>';
+
+        const params = new URLSearchParams({model: model});
+        if (storageGb) params.set('storage_gb', storageGb);
+        if (grade) params.set('grade', grade);
+
+        fetch('/api/pricing/lookup?' + params)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.prices || Object.keys(data.prices).length === 0) {
+                    panel.innerHTML = '<div class="text-gray-400">No pricing data available for this model</div>';
+                    return;
+                }
+                let html = '<div class="text-xs text-gray-400 mb-3">Source: ' + esc(data.source) + '</div>';
+                if (data.suggested_price) {
+                    html += '<div class="text-center mb-4"><div class="text-3xl font-bold text-green-600">$' + data.suggested_price + '</div>'
+                        + '<div class="text-sm text-gray-500">Suggested market price</div></div>';
+                }
+                html += '<table class="w-full text-sm"><thead><tr class="text-gray-500 border-b">'
+                    + '<th class="text-left py-1">Storage</th><th class="text-right py-1">Good</th>'
+                    + '<th class="text-right py-1">Fair</th><th class="text-right py-1">Poor</th></tr></thead><tbody>';
+                for (const [storage, conditions] of Object.entries(data.prices)) {
+                    const label = parseInt(storage) >= 1024 ? (parseInt(storage)/1024) + 'TB' : storage + 'GB';
+                    html += '<tr class="border-b"><td class="py-1">' + label + '</td>'
+                        + '<td class="text-right py-1 text-green-600">$' + (conditions.good || '-') + '</td>'
+                        + '<td class="text-right py-1 text-yellow-600">$' + (conditions.fair || '-') + '</td>'
+                        + '<td class="text-right py-1 text-red-600">$' + (conditions.poor || '-') + '</td></tr>';
+                }
+                html += '</tbody></table>';
+                panel.innerHTML = html;
+            })
+            .catch(() => {
+                panel.innerHTML = '<div class="text-red-500">Failed to load pricing</div>';
+            });
+    }
 
     function calcProfit() {
         const buy = parseFloat(el('buy-price').value);

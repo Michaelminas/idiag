@@ -146,13 +146,15 @@ class TestIPSWCache:
 
 
 class TestSHSHBlobs:
-    """Test SHSH blob save (mocked pymobiledevice3)."""
+    """Test SHSH blob save with tsschecker + pymobiledevice3 fallback."""
 
-    @patch("app.services.firmware_manager._get_tss_response")
-    def test_save_shsh_blob_success(self, mock_tss, tmp_path):
+    @patch("app.services.firmware_manager._save_via_tsschecker")
+    def test_save_shsh_via_tsschecker(self, mock_tsschecker, tmp_path):
         from app.services.firmware_manager import save_shsh_blobs
 
-        mock_tss.return_value = b"fake-shsh-blob-plist-data"
+        blob_file = tmp_path / "blob.shsh2"
+        blob_file.write_bytes(b"fake-shsh-blob-data")
+        mock_tsschecker.return_value = blob_file
 
         result = save_shsh_blobs(
             ecid="0x1234ABCD",
@@ -163,13 +165,32 @@ class TestSHSHBlobs:
 
         assert result is not None
         assert result.exists()
-        assert result.read_bytes() == b"fake-shsh-blob-plist-data"
+        mock_tsschecker.assert_called_once()
 
-    @patch("app.services.firmware_manager._get_tss_response")
-    def test_save_shsh_blob_failure(self, mock_tss, tmp_path):
+    @patch("app.services.firmware_manager._save_via_pymobiledevice3")
+    @patch("app.services.firmware_manager._save_via_tsschecker", return_value=None)
+    def test_falls_back_to_pymobiledevice3(self, _mock_tss, mock_pmd3, tmp_path):
         from app.services.firmware_manager import save_shsh_blobs
 
-        mock_tss.side_effect = Exception("TSS server error")
+        blob_file = tmp_path / "fallback.shsh2"
+        blob_file.write_bytes(b"pmd3-blob-data")
+        mock_pmd3.return_value = blob_file
+
+        result = save_shsh_blobs(
+            ecid="0x1234ABCD",
+            device_model="iPhone14,2",
+            ios_version="17.4",
+            blob_dir=tmp_path,
+        )
+
+        assert result is not None
+        assert result.exists()
+        mock_pmd3.assert_called_once()
+
+    @patch("app.services.firmware_manager._save_via_pymobiledevice3", return_value=None)
+    @patch("app.services.firmware_manager._save_via_tsschecker", return_value=None)
+    def test_both_methods_fail(self, _mock_tss, _mock_pmd3, tmp_path):
+        from app.services.firmware_manager import save_shsh_blobs
 
         result = save_shsh_blobs(
             ecid="0x1234ABCD",

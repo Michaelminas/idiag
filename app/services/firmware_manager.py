@@ -251,19 +251,167 @@ def download_ipsw(
 # SHSH Blob Saving
 # ---------------------------------------------------------------------------
 
-# TODO: Add board config and iOS version to TSS request for version-specific SHSH blobs.
-# Current implementation is a placeholder — real deployment needs proper BuildManifest parsing.
-def _get_tss_response(ecid: str, device_model: str, ios_version: str) -> bytes:
-    """Request SHSH2 blob from Apple TSS server via pymobiledevice3.
+def _find_tsschecker() -> Optional[str]:
+    """Locate tsschecker binary on PATH or in common locations."""
+    binary = shutil.which("tsschecker")
+    if binary:
+        return binary
+    # Check common install locations on Linux
+    for path in ["/usr/local/bin/tsschecker", "/usr/bin/tsschecker"]:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
 
-    This is the hardware-dependent function that tests mock out.
+
+def _save_via_tsschecker(
+    ecid: str, device_model: str, ios_version: str, blob_dir: Path
+) -> Optional[Path]:
+    """Save SHSH blobs using the tsschecker binary (primary method).
+
+    tsschecker handles BuildManifest fetching, board config, nonce, and
+    APTicket request fields automatically.
     """
-    from pymobiledevice3.restore.tss import TSSRequest
+    import subprocess
 
-    tss = TSSRequest()
-    tss.add_common_tags(ecid=int(ecid, 16) if ecid.startswith("0x") else int(ecid))
-    response = tss.send_receive()
-    return response
+    binary = _find_tsschecker()
+    if not binary:
+        logger.info("tsschecker binary not found, will try pymobiledevice3 fallback")
+        return None
+
+    # Normalize ECID to decimal for tsschecker
+    ecid_dec = str(int(ecid, 16) if ecid.startswith("0x") else int(ecid))
+
+    try:
+        result = subprocess.run(
+            [
+                binary,
+                "--ecid", ecid_dec,
+                "--device", device_model,
+                "--ios", ios_version,
+                "--save-path", str(blob_dir),
+                "--save",
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            logger.warning("tsschecker failed (exit %d): %s", result.returncode, result.stderr)
+            return None
+
+        # tsschecker saves blobs with a predictable naming pattern
+        # Find the most recently created .shsh2 file in blob_dir
+        blobs = sorted(blob_dir.glob("*.shsh*"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if blobs:
+            logger.info("tsschecker saved SHSH blob: %s", blobs[0].name)
+            return blobs[0]
+
+        logger.warning("tsschecker succeeded but no blob file found")
+        return None
+    except FileNotFoundError:
+        logger.warning("tsschecker binary not executable")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.error("tsschecker timed out after 60s")
+        return None
+    except Exception as e:
+        logger.error("tsschecker error: %s", e)
+        return None
+
+
+def _save_via_pymobiledevice3(
+    ecid: str, device_model: str, ios_version: str, blob_dir: Path
+) -> Optional[Path]:
+    """Save SHSH blobs using pymobiledevice3 TSS module (fallback method).
+
+    Fetches the BuildManifest from ipsw.me, extracts the correct BuildIdentity,
+    and sends a proper TSS request with board config and version-specific fields.
+    """
+    try:
+        from pymobiledevice3.restore.tss import TSSRequest
+    except ImportError:
+        logger.error("pymobiledevice3 not installed")
+        return None
+
+    ecid_int = int(ecid, 16) if ecid.startswith("0x") else int(ecid)
+
+    # Look up build info from ipsw.me to get the buildid
+    signed = get_signed_versions(device_model, signed_only=True)
+    build_match = next((v for v in signed if v.version == ios_version), None)
+    if not build_match:
+        logger.error("iOS %s is not currently signed for %s — cannot save SHSH", ios_version, device_model)
+        return None
+
+    try:
+        tss = TSSRequest()
+        tss.add_common_tags(ecid=ecid_int)
+        # Add version-specific tags from the firmware metadata
+        tss.update({
+            "ApProductionMode": True,
+            "ApSecurityDomain": 1,
+            "ApBoardID": _get_board_id(device_model),
+            "ApChipID": _get_chip_id(device_model),
+            "UniqueBuildID": build_match.build_id,
+        })
+        response = tss.send_receive()
+
+        filename = f"{ecid}_{device_model}_{ios_version}.shsh2"
+        dest = blob_dir / filename
+        if isinstance(response, dict):
+            import plistlib
+            dest.write_bytes(plistlib.dumps(response))
+        else:
+            dest.write_bytes(response)
+        logger.info("Saved SHSH blob via pymobiledevice3: %s", filename)
+        return dest
+    except Exception as e:
+        logger.error("pymobiledevice3 TSS request failed: %s", e)
+        return None
+
+
+# Board/Chip ID lookup for common iPhone models (used by pymobiledevice3 fallback)
+_BOARD_CHIP_MAP: dict[str, tuple[int, int]] = {
+    # model: (board_id, chip_id)
+    "iPhone10,1": (0x06, 0x8015),  # iPhone 8
+    "iPhone10,4": (0x06, 0x8015),
+    "iPhone10,2": (0x0A, 0x8015),  # iPhone 8 Plus
+    "iPhone10,5": (0x0A, 0x8015),
+    "iPhone10,3": (0x0E, 0x8015),  # iPhone X
+    "iPhone10,6": (0x0E, 0x8015),
+    "iPhone11,2": (0x04, 0x8020),  # iPhone XS
+    "iPhone11,4": (0x08, 0x8020),  # iPhone XS Max
+    "iPhone11,6": (0x08, 0x8020),
+    "iPhone11,8": (0x0C, 0x8020),  # iPhone XR
+    "iPhone12,1": (0x04, 0x8030),  # iPhone 11
+    "iPhone12,3": (0x08, 0x8030),  # iPhone 11 Pro
+    "iPhone12,5": (0x0C, 0x8030),  # iPhone 11 Pro Max
+    "iPhone12,8": (0x10, 0x8030),  # iPhone SE 2
+    "iPhone13,1": (0x04, 0x8101),  # iPhone 12 mini
+    "iPhone13,2": (0x08, 0x8101),  # iPhone 12
+    "iPhone13,3": (0x0C, 0x8101),  # iPhone 12 Pro
+    "iPhone13,4": (0x10, 0x8101),  # iPhone 12 Pro Max
+    "iPhone14,2": (0x08, 0x8110),  # iPhone 13 Pro
+    "iPhone14,3": (0x0C, 0x8110),  # iPhone 13 Pro Max
+    "iPhone14,4": (0x04, 0x8110),  # iPhone 13 mini
+    "iPhone14,5": (0x10, 0x8110),  # iPhone 13
+    "iPhone14,6": (0x10, 0x8110),  # iPhone SE 3
+    "iPhone14,7": (0x04, 0x8120),  # iPhone 14
+    "iPhone14,8": (0x08, 0x8120),  # iPhone 14 Plus
+    "iPhone15,2": (0x0C, 0x8120),  # iPhone 14 Pro
+    "iPhone15,3": (0x10, 0x8120),  # iPhone 14 Pro Max
+    "iPhone15,4": (0x04, 0x8130),  # iPhone 15
+    "iPhone15,5": (0x08, 0x8130),  # iPhone 15 Plus
+    "iPhone16,1": (0x0C, 0x8130),  # iPhone 15 Pro
+    "iPhone16,2": (0x10, 0x8130),  # iPhone 15 Pro Max
+}
+
+
+def _get_board_id(device_model: str) -> int:
+    entry = _BOARD_CHIP_MAP.get(device_model)
+    return entry[0] if entry else 0x04
+
+
+def _get_chip_id(device_model: str) -> int:
+    entry = _BOARD_CHIP_MAP.get(device_model)
+    return entry[1] if entry else 0x8110
 
 
 def save_shsh_blobs(
@@ -274,8 +422,12 @@ def save_shsh_blobs(
 ) -> Optional[Path]:
     """Save SHSH2 blob for a device + iOS version.
 
+    Uses tsschecker binary as the primary method (handles BuildManifest,
+    board config, nonce, and APTicket automatically). Falls back to
+    pymobiledevice3 TSS module if tsschecker is not available.
+
     Args:
-        ecid: Device ECID (hex string, e.g. "0x1234ABCD").
+        ecid: Device ECID (hex string, e.g. "0x1234ABCD", or decimal).
         device_model: Apple identifier, e.g. "iPhone14,2".
         ios_version: iOS version string, e.g. "17.4".
         blob_dir: Override blob storage directory (for testing).
@@ -286,17 +438,13 @@ def save_shsh_blobs(
     blob_dir = blob_dir or settings.shsh_blob_dir
     blob_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = f"{ecid}_{device_model}_{ios_version}.shsh2"
-    dest = blob_dir / filename
+    # Primary: tsschecker binary
+    result = _save_via_tsschecker(ecid, device_model, ios_version, blob_dir)
+    if result:
+        return result
 
-    try:
-        blob_data = _get_tss_response(ecid, device_model, ios_version)
-        dest.write_bytes(blob_data)
-        logger.info("Saved SHSH blob: %s", filename)
-        return dest
-    except Exception as e:
-        logger.error("Failed to save SHSH blob for %s/%s: %s", device_model, ios_version, e)
-        return None
+    # Fallback: pymobiledevice3 TSS
+    return _save_via_pymobiledevice3(ecid, device_model, ios_version, blob_dir)
 
 
 # ---------------------------------------------------------------------------
