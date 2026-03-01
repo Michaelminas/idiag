@@ -247,7 +247,7 @@ class InventoryDB:
                 (record.device_id, record.filename, record.filepath, record.label),
             )
             self.conn.commit()
-            return cur.lastrowid
+            return cur.lastrowid  # type: ignore[return-value]
 
     def list_photos(self, device_id: int) -> list[PhotoRecord]:
         with self._lock:
@@ -269,20 +269,20 @@ class InventoryDB:
 
     def save_sale(self, record: SalesRecord) -> int:
         with self._lock:
+            device = self._get_device_by_id_unlocked(record.device_id)
+
             # Auto-compute profit if sell_price is set
             profit = None
             if record.sell_price is not None:
-                device = self._get_device_by_id_unlocked(record.device_id)
                 buy_price = device.buy_price if device and device.buy_price else 0.0
                 profit = record.sell_price - buy_price - record.fees
 
             # Auto-compute days_in_inventory
             days = record.days_in_inventory
-            if days is None:
-                device = self._get_device_by_id_unlocked(record.device_id)
-                if device and device.created_at:
-                    created = device.created_at if isinstance(device.created_at, datetime) else datetime.fromisoformat(str(device.created_at))
-                    days = (datetime.now() - created).days
+            if days is None and device and device.created_at:
+                created = (device.created_at if isinstance(device.created_at, datetime)
+                           else datetime.fromisoformat(str(device.created_at)))
+                days = (datetime.now() - created).days
 
             now = datetime.now().isoformat()
             cur = self.conn.execute(
@@ -293,7 +293,7 @@ class InventoryDB:
                  record.fees, record.sold_at or now, days, profit, record.notes),
             )
             self.conn.commit()
-            return cur.lastrowid
+            return cur.lastrowid  # type: ignore[return-value]
 
     def get_sale(self, sale_id: int) -> Optional[SalesRecord]:
         with self._lock:
