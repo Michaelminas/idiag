@@ -127,6 +127,49 @@ def _calculate_risk_score(matches: list[CrashMatch], total: int) -> float:
     return round(score, 1)
 
 
+def compute_trends(
+    current_counts: dict[str, int],
+    history: list[dict[str, int]],
+) -> dict[str, str]:
+    """Compare current subsystem counts against most recent historical scan."""
+    if not history:
+        return {}
+    previous = history[-1]
+    trends: dict[str, str] = {}
+    for subsystem, current_count in current_counts.items():
+        prev_count = previous.get(subsystem)
+        if prev_count is None:
+            continue
+        if current_count > prev_count:
+            trends[subsystem] = "worsening"
+        elif current_count < prev_count:
+            trends[subsystem] = "improving"
+        else:
+            trends[subsystem] = "stable"
+    return trends
+
+
+def compute_predicted_failures(
+    trends: dict[str, str],
+    subsystem_counts: dict[str, int],
+    severity_map: dict[str, int],
+) -> list[str]:
+    """Flag subsystems that are worsening with high severity."""
+    failures: list[str] = []
+    for subsystem, trend in trends.items():
+        if trend != "worsening":
+            continue
+        severity = severity_map.get(subsystem, 0)
+        if severity < 4:
+            continue
+        count = subsystem_counts.get(subsystem, 0)
+        failures.append(
+            f"{subsystem} hardware — {count} crashes, increasing trend. "
+            f"Recommend pricing for {subsystem.lower()} replacement."
+        )
+    return failures
+
+
 def _generate_summary(analysis: CrashAnalysis) -> str:
     if analysis.total_reports == 0:
         return "No crash reports found on device."

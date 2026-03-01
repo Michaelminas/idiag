@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from app.models.crash import CrashAnalysis
-from app.services.log_analyzer import analyze_crash_text
+from app.services.log_analyzer import (
+    analyze_crash_text,
+    compute_predicted_failures,
+    compute_trends,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -276,3 +280,130 @@ class TestCrashAnalysisModelFields:
         )
         assert len(analysis.predicted_failures) == 1
         assert "Camera" in analysis.predicted_failures[0]
+
+
+# ---------------------------------------------------------------------------
+# compute_trends tests
+# ---------------------------------------------------------------------------
+
+
+class TestComputeTrends:
+    """Tests for compute_trends() function."""
+
+    def test_no_history_returns_empty(self):
+        result = compute_trends({"Camera": 5}, [])
+        assert result == {}
+
+    def test_stable_counts(self):
+        current = {"Camera": 3, "WiFi": 2}
+        history = [{"Camera": 3, "WiFi": 2}]
+        result = compute_trends(current, history)
+        assert result["Camera"] == "stable"
+        assert result["WiFi"] == "stable"
+
+    def test_worsening_counts(self):
+        current = {"Camera": 5}
+        history = [{"Camera": 3}]
+        result = compute_trends(current, history)
+        assert result["Camera"] == "worsening"
+
+    def test_improving_counts(self):
+        current = {"Camera": 1}
+        history = [{"Camera": 5}]
+        result = compute_trends(current, history)
+        assert result["Camera"] == "improving"
+
+    def test_new_subsystem_not_in_history_skipped(self):
+        current = {"Camera": 3, "NFC": 1}
+        history = [{"Camera": 3}]
+        result = compute_trends(current, history)
+        assert result["Camera"] == "stable"
+        assert "NFC" not in result
+
+    def test_multiple_history_uses_most_recent(self):
+        current = {"Camera": 5}
+        history = [
+            {"Camera": 10},  # older
+            {"Camera": 3},   # most recent
+        ]
+        result = compute_trends(current, history)
+        assert result["Camera"] == "worsening"
+
+    def test_mixed_trends(self):
+        current = {"Camera": 5, "WiFi": 2, "GPU": 3}
+        history = [{"Camera": 3, "WiFi": 4, "GPU": 3}]
+        result = compute_trends(current, history)
+        assert result["Camera"] == "worsening"
+        assert result["WiFi"] == "improving"
+        assert result["GPU"] == "stable"
+
+
+# ---------------------------------------------------------------------------
+# compute_predicted_failures tests
+# ---------------------------------------------------------------------------
+
+
+class TestComputePredictedFailures:
+    """Tests for compute_predicted_failures() function."""
+
+    def test_worsening_high_severity_produces_failure(self):
+        trends = {"Camera": "worsening"}
+        counts = {"Camera": 5}
+        severity_map = {"Camera": 5}
+        result = compute_predicted_failures(trends, counts, severity_map)
+        assert len(result) == 1
+        assert "Camera" in result[0]
+        assert "5 crashes" in result[0]
+        assert "increasing trend" in result[0]
+
+    def test_stable_high_severity_no_failure(self):
+        trends = {"Camera": "stable"}
+        counts = {"Camera": 5}
+        severity_map = {"Camera": 5}
+        result = compute_predicted_failures(trends, counts, severity_map)
+        assert result == []
+
+    def test_improving_high_severity_no_failure(self):
+        trends = {"Camera": "improving"}
+        counts = {"Camera": 2}
+        severity_map = {"Camera": 5}
+        result = compute_predicted_failures(trends, counts, severity_map)
+        assert result == []
+
+    def test_worsening_low_severity_no_failure(self):
+        trends = {"GPU": "worsening"}
+        counts = {"GPU": 3}
+        severity_map = {"GPU": 3}
+        result = compute_predicted_failures(trends, counts, severity_map)
+        assert result == []
+
+    def test_worsening_severity_4_produces_failure(self):
+        trends = {"Thermal": "worsening"}
+        counts = {"Thermal": 4}
+        severity_map = {"Thermal": 4}
+        result = compute_predicted_failures(trends, counts, severity_map)
+        assert len(result) == 1
+        assert "Thermal" in result[0]
+
+    def test_multiple_worsening_subsystems(self):
+        trends = {"Camera": "worsening", "Storage": "worsening", "GPU": "worsening"}
+        counts = {"Camera": 5, "Storage": 3, "GPU": 2}
+        severity_map = {"Camera": 5, "Storage": 5, "GPU": 3}
+        result = compute_predicted_failures(trends, counts, severity_map)
+        # GPU has severity 3, so only Camera and Storage
+        assert len(result) == 2
+        subsystems = " ".join(result)
+        assert "Camera" in subsystems
+        assert "Storage" in subsystems
+        assert "GPU" not in subsystems
+
+    def test_empty_trends_no_failures(self):
+        result = compute_predicted_failures({}, {}, {})
+        assert result == []
+
+    def test_subsystem_missing_from_severity_map(self):
+        trends = {"Unknown": "worsening"}
+        counts = {"Unknown": 3}
+        severity_map = {}  # unknown not in map
+        result = compute_predicted_failures(trends, counts, severity_map)
+        assert result == []  # severity defaults to 0, below threshold
