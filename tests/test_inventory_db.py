@@ -141,3 +141,47 @@ def test_save_and_get_wipe_record(db):
     assert records[0].method == "factory_reset"
     assert records[0].success is True
     assert records[0].cert_path == "/data/certs/cert001.pdf"
+
+
+# -- Sell Price / Profit Tests --
+
+
+class TestSellPriceAndProfit:
+    def test_sell_price_stored_and_retrieved(self, db: InventoryDB):
+        record = DeviceRecord(udid="price-test", buy_price=200.0, sell_price=350.0)
+        device_id = db.upsert_device(record)
+        fetched = db.get_device_by_id(device_id)
+        assert fetched is not None
+        assert fetched.sell_price == 350.0
+        assert fetched.buy_price == 200.0
+
+    def test_profit_computed_correctly(self, db: InventoryDB):
+        record = DeviceRecord(udid="profit-test", buy_price=150.0, sell_price=275.0)
+        device_id = db.upsert_device(record)
+        fetched = db.get_device_by_id(device_id)
+        assert fetched is not None
+        assert fetched.profit == 125.0
+
+    def test_profit_none_when_sell_price_missing(self, db: InventoryDB):
+        record = DeviceRecord(udid="no-sell", buy_price=200.0)
+        device_id = db.upsert_device(record)
+        fetched = db.get_device_by_id(device_id)
+        assert fetched is not None
+        assert fetched.profit is None
+
+    def test_profit_none_when_buy_price_missing(self, db: InventoryDB):
+        record = DeviceRecord(udid="no-buy", sell_price=300.0)
+        device_id = db.upsert_device(record)
+        fetched = db.get_device_by_id(device_id)
+        assert fetched is not None
+        assert fetched.profit is None
+
+    def test_sell_price_updated_on_upsert(self, db: InventoryDB):
+        record = DeviceRecord(udid="update-sell", buy_price=100.0, sell_price=200.0)
+        db.upsert_device(record)
+        record.sell_price = 250.0
+        db.upsert_device(record)
+        fetched = db.get_device_by_udid("update-sell")
+        assert fetched is not None
+        assert fetched.sell_price == 250.0
+        assert fetched.profit == 150.0

@@ -50,6 +50,13 @@ class DeviceRecord(BaseModel):
     grade: str = ""
     status: DeviceStatus = "intake"
     buy_price: Optional[float] = None
+    sell_price: Optional[float] = None
     notes: str = ""
+
+    @property
+    def profit(self) -> Optional[float]:
+        if self.buy_price is not None and self.sell_price is not None:
+            return round(self.sell_price - self.buy_price, 2)
+        return None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS devices (
     grade TEXT DEFAULT '',
     status TEXT DEFAULT 'intake',
     buy_price REAL,
+    sell_price REAL,
     notes TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -137,6 +138,11 @@ class InventoryDB:
         with self._lock:
             self.conn.executescript(SCHEMA)
             self.conn.commit()
+            # Sprint 2 migration: add sell_price column if missing
+            try:
+                self.conn.execute("SELECT sell_price FROM devices LIMIT 1")
+            except sqlite3.OperationalError:
+                self.conn.execute("ALTER TABLE devices ADD COLUMN sell_price REAL")
 
     def close(self) -> None:
         if self._conn:
@@ -153,12 +159,12 @@ class InventoryDB:
             if existing:
                 self.conn.execute(
                     """UPDATE devices SET serial=?, imei=?, model=?, ios_version=?,
-                       grade=?, status=?, buy_price=?, notes=?, updated_at=?
+                       grade=?, status=?, buy_price=?, sell_price=?, notes=?, updated_at=?
                        WHERE udid=?""",
                     (
                         record.serial, record.imei, record.model, record.ios_version,
-                        record.grade, record.status, record.buy_price, record.notes,
-                        now, record.udid,
+                        record.grade, record.status, record.buy_price, record.sell_price,
+                        record.notes, now, record.udid,
                     ),
                 )
                 self.conn.commit()
@@ -166,12 +172,12 @@ class InventoryDB:
             else:
                 cur = self.conn.execute(
                     """INSERT INTO devices (udid, serial, imei, model, ios_version,
-                       grade, status, buy_price, notes, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       grade, status, buy_price, sell_price, notes, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         record.udid, record.serial, record.imei, record.model,
                         record.ios_version, record.grade, record.status,
-                        record.buy_price, record.notes, now, now,
+                        record.buy_price, record.sell_price, record.notes, now, now,
                     ),
                 )
                 self.conn.commit()
@@ -467,6 +473,7 @@ class InventoryDB:
             grade=row["grade"] or "",
             status=row["status"] or "intake",
             buy_price=row["buy_price"],
+            sell_price=row["sell_price"],
             notes=row["notes"] or "",
             created_at=row["created_at"],
             updated_at=row["updated_at"],
