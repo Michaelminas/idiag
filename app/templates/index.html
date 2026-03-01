@@ -247,7 +247,7 @@
         if (Object.keys(analysis.subsystem_counts).length > 0) {
             html += '<div class="mt-2 space-y-1">';
             for (const [sub, count] of Object.entries(analysis.subsystem_counts)) {
-                html += '<div class="flex justify-between text-sm"><span class="text-gray-500">' + sub + '</span><span>' + count + '</span></div>';
+                html += '<div class="flex justify-between text-sm"><span class="text-gray-500">' + esc(sub) + '</span><span>' + esc(count) + '</span></div>';
             }
             html += '</div>';
         }
@@ -307,10 +307,19 @@
             if (verif) renderVerification(verif);
             else el('verification-info').innerHTML = '<span class="text-gray-400">No IMEI or API key not configured</span>';
 
-            // Compute grade
-            const gradeUrl = '/api/diagnostics/grade/' + udid + (info.imei ? '?imei=' + info.imei : '');
-            const gradeResp = await fetch(gradeUrl);
-            if (gradeResp.ok) renderGrade(await gradeResp.json());
+            // Compute grade from pre-fetched results (POST to avoid re-running diagnostics)
+            if (diag && crashes) {
+                const gradeResp = await fetch('/api/diagnostics/grade', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        diagnostics: diag,
+                        crashes: crashes,
+                        verification: verif || {},
+                    }),
+                });
+                if (gradeResp.ok) renderGrade(await gradeResp.json());
+            }
         } catch (e) {
             console.error('Diagnostics error:', e);
         } finally {
@@ -343,18 +352,23 @@
     // -- Helpers --
 
     function el(id) { return document.getElementById(id); }
-    function infoRow(label, value, mono) {
-        return '<div class="flex justify-between"><span class="text-gray-500">' + label + '</span>'
-            + '<span class="' + (mono ? 'font-mono text-xs' : '') + '">' + (value || '-') + '</span></div>';
+    function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s == null ? '-' : String(s);
+        return d.innerHTML;
     }
-    function kv(k, v) { return '<div><span class="text-gray-500">' + k + ':</span> ' + v + '</div>'; }
+    function infoRow(label, value, mono) {
+        return '<div class="flex justify-between"><span class="text-gray-500">' + esc(label) + '</span>'
+            + '<span class="' + (mono ? 'font-mono text-xs' : '') + '">' + esc(value) + '</span></div>';
+    }
+    function kv(k, v) { return '<div><span class="text-gray-500">' + esc(k) + ':</span> ' + esc(v) + '</div>'; }
     function statusRow(label, val) {
         const text = val === true ? '✓ Original' : val === false ? '✗ Replaced' : '? Unknown';
         const c = val === true ? 'text-green-600' : val === false ? 'text-red-600' : 'text-gray-400';
-        return '<div class="flex justify-between text-sm"><span class="text-gray-500">' + label + '</span><span class="' + c + '">' + text + '</span></div>';
+        return '<div class="flex justify-between text-sm"><span class="text-gray-500">' + esc(label) + '</span><span class="' + c + '">' + text + '</span></div>';
     }
     function verRow(label, value, colorClass) {
-        return '<div class="flex justify-between"><span class="text-gray-500">' + label + '</span><span class="font-semibold ' + colorClass + '">' + value + '</span></div>';
+        return '<div class="flex justify-between"><span class="text-gray-500">' + esc(label) + '</span><span class="font-semibold ' + colorClass + '">' + esc(value) + '</span></div>';
     }
 
     // Init

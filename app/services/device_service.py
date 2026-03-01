@@ -80,6 +80,10 @@ def get_lockdown_client(udid: Optional[str] = None):
     """Get a raw lockdown client for use by other services.
 
     Returns a context manager. Caller must use `with` statement.
+    Raises ImportError if pymobiledevice3 is not installed.
     """
-    from pymobiledevice3.lockdown import create_using_usbmux
+    try:
+        from pymobiledevice3.lockdown import create_using_usbmux
+    except ImportError:
+        raise ImportError("pymobiledevice3 is required. Install with: pip install pymobiledevice3")
     return create_using_usbmux(serial=udid)

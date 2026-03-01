@@ -53,13 +53,12 @@ app.include_router(inventory.router)
 app.include_router(serial.router)
 app.include_router(websocket.router)
 
-# Static files — serve CSS/JS but not templates
+# Static files — serve CSS/JS from /static
 static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(exist_ok=True)
 (static_dir / "css").mkdir(exist_ok=True)
 (static_dir / "js").mkdir(exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(static_dir / "css")), name="static_css")
-app.mount("/js", StaticFiles(directory=str(static_dir / "js")), name="static_js")
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # Templates — separate from static to avoid leaking raw Jinja syntax
 templates_dir = Path(__file__).parent / "templates"

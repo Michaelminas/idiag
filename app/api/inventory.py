@@ -1,6 +1,7 @@
 """Inventory API routes."""
 
 import threading
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 
@@ -8,6 +9,8 @@ from app.models.device import DeviceRecord
 from app.services.inventory_db import InventoryDB
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
+
+DeviceStatus = Literal["intake", "testing", "listed", "sold", "returned", "junk"]
 
 _db_lock = threading.Lock()
 _db: InventoryDB | None = None
@@ -24,7 +27,7 @@ def get_db() -> InventoryDB:
 
 
 @router.get("/devices")
-def list_devices(status: str | None = None) -> list[DeviceRecord]:
+def list_devices(status: DeviceStatus | None = None) -> list[DeviceRecord]:
     return get_db().list_devices(status)
 
 

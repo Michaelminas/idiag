@@ -96,9 +96,14 @@ def _pull_crash_reports(udid: Optional[str] = None) -> tuple[list[Path], tempfil
 
     Returns (file_list, tmpdir_handle). Caller must keep tmpdir_handle alive
     while reading files, then call tmpdir_handle.cleanup().
+
+    Raises ImportError if pymobiledevice3 is not installed.
     """
-    from pymobiledevice3.lockdown import create_using_usbmux
-    from pymobiledevice3.services.crash_reports import CrashReportsManager
+    try:
+        from pymobiledevice3.lockdown import create_using_usbmux
+        from pymobiledevice3.services.crash_reports import CrashReportsManager
+    except ImportError:
+        raise ImportError("pymobiledevice3 is required for crash report analysis. Install with: pip install pymobiledevice3")
 
     tmpdir = tempfile.TemporaryDirectory(prefix="idiag_crashes_")
     tmppath = Path(tmpdir.name)

@@ -4,6 +4,7 @@ SICKW API (service 61): iPhone Carrier + FMI + Blacklist bundle.
 Local: pymobiledevice3 ActivationState + MDM profile detection.
 """
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -108,11 +109,11 @@ async def run_verification(udid: Optional[str] = None, imei: str = "") -> Verifi
     """Run all verification checks — SICKW API + local checks."""
     result = VerificationResult()
 
-    # Local activation state
-    result.activation_state = check_activation_local(udid)
+    # Local activation state (blocking USB I/O — run in thread)
+    result.activation_state = await asyncio.to_thread(check_activation_local, udid)
 
-    # Local MDM check
-    result.mdm_enrolled, result.mdm_organization = check_mdm_local(udid)
+    # Local MDM check (blocking USB I/O — run in thread)
+    result.mdm_enrolled, result.mdm_organization = await asyncio.to_thread(check_mdm_local, udid)
 
     # SICKW API check (if valid IMEI available and API key configured)
     if imei and settings.sickw_api_key:

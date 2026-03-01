@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -71,11 +72,12 @@ class InventoryDB:
         self.db_path = db_path or settings.db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: Optional[sqlite3.Connection] = None
+        self._lock = threading.Lock()
 
     @property
     def conn(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
@@ -95,107 +97,119 @@ class InventoryDB:
 
     def upsert_device(self, record: DeviceRecord) -> int:
         """Insert or update a device record. Returns the device id."""
-        existing = self.get_device_by_udid(record.udid)
-        now = datetime.now().isoformat()
-        if existing:
-            self.conn.execute(
-                """UPDATE devices SET serial=?, imei=?, model=?, ios_version=?,
-                   grade=?, status=?, buy_price=?, notes=?, updated_at=?
-                   WHERE udid=?""",
-                (
-                    record.serial, record.imei, record.model, record.ios_version,
-                    record.grade, record.status, record.buy_price, record.notes,
-                    now, record.udid,
-                ),
-            )
+        with self._lock:
+            existing = self._get_device_by_udid_unlocked(record.udid)
+            now = datetime.now().isoformat()
+            if existing:
+                self.conn.execute(
+                    """UPDATE devices SET serial=?, imei=?, model=?, ios_version=?,
+                       grade=?, status=?, buy_price=?, notes=?, updated_at=?
+                       WHERE udid=?""",
+                    (
+                        record.serial, record.imei, record.model, record.ios_version,
+                        record.grade, record.status, record.buy_price, record.notes,
+                        now, record.udid,
+                    ),
+                )
+                self.conn.commit()
+                return existing.id  # type: ignore[return-value]
+            else:
+                cur = self.conn.execute(
+                    """INSERT INTO devices (udid, serial, imei, model, ios_version,
+                       grade, status, buy_price, notes, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        record.udid, record.serial, record.imei, record.model,
+                        record.ios_version, record.grade, record.status,
+                        record.buy_price, record.notes, now, now,
+                    ),
+                )
+                self.conn.commit()
+                return cur.lastrowid  # type: ignore[return-value]
+
+    def _get_device_by_udid_unlocked(self, udid: str) -> Optional[DeviceRecord]:
+        """Internal lookup without lock — caller must hold self._lock."""
+        row = self.conn.execute("SELECT * FROM devices WHERE udid=?", (udid,)).fetchone()
+        return self._row_to_device(row) if row else None
+
+    def get_device_by_udid(self, udid: str) -> Optional[DeviceRecord]:
+        with self._lock:
+            return self._get_device_by_udid_unlocked(udid)
+
+    def get_device_by_id(self, device_id: int) -> Optional[DeviceRecord]:
+        with self._lock:
+            row = self.conn.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
+            return self._row_to_device(row) if row else None
+
+    def list_devices(self, status: Optional[str] = None) -> list[DeviceRecord]:
+        with self._lock:
+            if status:
+                rows = self.conn.execute(
+                    "SELECT * FROM devices WHERE status=? ORDER BY updated_at DESC", (status,)
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT * FROM devices ORDER BY updated_at DESC"
+                ).fetchall()
+            return [self._row_to_device(r) for r in rows]
+
+    def delete_device(self, device_id: int) -> bool:
+        with self._lock:
+            self.conn.execute("DELETE FROM crash_reports WHERE device_id=?", (device_id,))
+            self.conn.execute("DELETE FROM diagnostics WHERE device_id=?", (device_id,))
+            self.conn.execute("DELETE FROM verifications WHERE device_id=?", (device_id,))
+            cur = self.conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
             self.conn.commit()
-            return existing.id  # type: ignore[return-value]
-        else:
+            return cur.rowcount > 0
+
+    # -- Diagnostics --
+
+    def save_diagnostic(self, device_id: int, result: DiagnosticResult) -> int:
+        with self._lock:
             cur = self.conn.execute(
-                """INSERT INTO devices (udid, serial, imei, model, ios_version,
-                   grade, status, buy_price, notes, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO diagnostics (device_id, battery_health, battery_cycles,
+                   parts_original, storage_total, storage_used, raw_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    record.udid, record.serial, record.imei, record.model,
-                    record.ios_version, record.grade, record.status,
-                    record.buy_price, record.notes, now, now,
+                    device_id, result.battery.health_percent, result.battery.cycle_count,
+                    1 if result.parts.all_original else 0,
+                    result.storage.total_gb, result.storage.used_gb,
+                    json.dumps(result.raw),
                 ),
             )
             self.conn.commit()
             return cur.lastrowid  # type: ignore[return-value]
 
-    def get_device_by_udid(self, udid: str) -> Optional[DeviceRecord]:
-        row = self.conn.execute("SELECT * FROM devices WHERE udid=?", (udid,)).fetchone()
-        return self._row_to_device(row) if row else None
-
-    def get_device_by_id(self, device_id: int) -> Optional[DeviceRecord]:
-        row = self.conn.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
-        return self._row_to_device(row) if row else None
-
-    def list_devices(self, status: Optional[str] = None) -> list[DeviceRecord]:
-        if status:
-            rows = self.conn.execute(
-                "SELECT * FROM devices WHERE status=? ORDER BY updated_at DESC", (status,)
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT * FROM devices ORDER BY updated_at DESC"
-            ).fetchall()
-        return [self._row_to_device(r) for r in rows]
-
-    def delete_device(self, device_id: int) -> bool:
-        self.conn.execute("DELETE FROM crash_reports WHERE device_id=?", (device_id,))
-        self.conn.execute("DELETE FROM diagnostics WHERE device_id=?", (device_id,))
-        self.conn.execute("DELETE FROM verifications WHERE device_id=?", (device_id,))
-        cur = self.conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
-        self.conn.commit()
-        return cur.rowcount > 0
-
-    # -- Diagnostics --
-
-    def save_diagnostic(self, device_id: int, result: DiagnosticResult) -> int:
-        cur = self.conn.execute(
-            """INSERT INTO diagnostics (device_id, battery_health, battery_cycles,
-               parts_original, storage_total, storage_used, raw_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                device_id, result.battery.health_percent, result.battery.cycle_count,
-                1 if result.parts.all_original else 0,
-                result.storage.total_gb, result.storage.used_gb,
-                json.dumps(result.raw),
-            ),
-        )
-        self.conn.commit()
-        return cur.lastrowid  # type: ignore[return-value]
-
     # -- Verifications --
 
     def save_verification(self, device_id: int, result: VerificationResult) -> int:
-        cur = self.conn.execute(
-            """INSERT INTO verifications (device_id, blacklist_status, fmi_status,
-               carrier, carrier_locked, mdm, raw_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                device_id, result.blacklist_status, result.fmi_status,
-                result.carrier, 1 if result.carrier_locked else 0,
-                result.mdm_organization, json.dumps(result.raw),
-            ),
-        )
-        self.conn.commit()
-        return cur.lastrowid  # type: ignore[return-value]
+        with self._lock:
+            cur = self.conn.execute(
+                """INSERT INTO verifications (device_id, blacklist_status, fmi_status,
+                   carrier, carrier_locked, mdm, raw_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    device_id, result.blacklist_status, result.fmi_status,
+                    result.carrier, 1 if result.carrier_locked else 0,
+                    result.mdm_organization, json.dumps(result.raw),
+                ),
+            )
+            self.conn.commit()
+            return cur.lastrowid  # type: ignore[return-value]
 
     # -- Crash Reports --
 
     def save_crash_summary(
         self, device_id: int, process: str, subsystem: str, severity: int, count: int
     ) -> int:
-        cur = self.conn.execute(
-            """INSERT INTO crash_reports (device_id, process, subsystem, severity, count)
-               VALUES (?, ?, ?, ?, ?)""",
-            (device_id, process, subsystem, severity, count),
-        )
-        self.conn.commit()
-        return cur.lastrowid  # type: ignore[return-value]
+        with self._lock:
+            cur = self.conn.execute(
+                """INSERT INTO crash_reports (device_id, process, subsystem, severity, count)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (device_id, process, subsystem, severity, count),
+            )
+            self.conn.commit()
+            return cur.lastrowid  # type: ignore[return-value]
 
     # -- Helpers --
 

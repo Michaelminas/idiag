@@ -11,7 +11,7 @@ from app.services import device_service
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Connected WebSocket clients — use set + discard for thread safety
+# Connected WebSocket clients — safe under single-threaded asyncio (no await between mutations)
 _clients: set[WebSocket] = set()
 
 

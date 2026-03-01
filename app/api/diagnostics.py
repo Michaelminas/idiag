@@ -1,6 +1,10 @@
 """Diagnostics and crash analysis API routes."""
 
+import asyncio
+from typing import Optional
+
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.models.crash import CrashAnalysis
 from app.models.diagnostic import DiagnosticResult
@@ -26,14 +30,28 @@ def analyze_crashes(udid: str | None = None) -> CrashAnalysis:
     return log_analyzer.analyze_device(udid)
 
 
+class GradeRequest(BaseModel):
+    """Pre-computed diagnostic results for grading."""
+    diagnostics: DiagnosticResult
+    crashes: CrashAnalysis
+    verification: VerificationResult
+    cosmetic: Optional[str] = None
+
+
+@router.post("/grade")
+def calculate_device_grade(req: GradeRequest) -> DeviceGrade:
+    """Compute overall device grade from pre-computed diagnostic results."""
+    return calculate_grade(req.diagnostics, req.crashes, req.verification, req.cosmetic)
+
+
 @router.get("/grade/{udid}")
-async def calculate_device_grade(
+async def calculate_device_grade_live(
     udid: str,
     imei: str = "",
     cosmetic: str | None = None,
 ) -> DeviceGrade:
-    """Run all diagnostics and compute the overall device grade."""
-    diag = diagnostic_engine.run_diagnostics(udid)
-    crashes = log_analyzer.analyze_device(udid)
+    """Run all diagnostics from scratch and compute the overall device grade."""
+    diag = await asyncio.to_thread(diagnostic_engine.run_diagnostics, udid)
+    crashes = await asyncio.to_thread(log_analyzer.analyze_device, udid)
     verif = await verification_service.run_verification(udid=udid, imei=imei)
     return calculate_grade(diag, crashes, verif, cosmetic)
