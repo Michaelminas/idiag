@@ -5,6 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>iDiag - iPhone Diagnostic Tool</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .severity-5 { background: #ef4444; color: white; }
+        .severity-4 { background: #f97316; color: white; }
+        .severity-3 { background: #eab308; color: black; }
+        .severity-2 { background: #3b82f6; color: white; }
+        .severity-1 { background: #6b7280; color: white; }
+        .trend-worsening { color: #ef4444; }
+        .trend-stable { color: #6b7280; }
+        .trend-improving { color: #22c55e; }
+        .chip { display: inline-block; padding: 2px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; margin: 2px; }
+        .chip-green { background: #d1fae5; color: #065f46; }
+        .chip-blue { background: #dbeafe; color: #1e40af; }
+        .chip-gray { background: #f3f4f6; color: #374151; }
+        .chip-red { background: #fee2e2; color: #991b1b; }
+        .tab-active { border-bottom: 2px solid #2563eb; color: #2563eb; font-weight: 600; }
+        .tab-inactive { border-bottom: 2px solid transparent; color: #6b7280; }
+        .tab-btn { padding: 0.5rem 1rem; cursor: pointer; transition: all 0.15s; }
+        .tab-btn:hover { color: #2563eb; }
+    </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
     <!-- Header -->
@@ -35,11 +54,12 @@
         <!-- Device Dashboard -->
         <div id="device-dashboard" class="hidden">
             <!-- Assessment Banner -->
-            <div id="assessment-banner" class="rounded-lg p-6 mb-6 bg-white shadow-md">
+            <div id="assessment-banner" class="rounded-lg p-6 mb-4 bg-white shadow-md">
                 <div class="flex items-center justify-between">
                     <div>
                         <h2 id="device-model" class="text-2xl font-bold text-gray-800"></h2>
                         <p id="device-ios" class="text-gray-500"></p>
+                        <div id="capability-chips" class="mt-2"></div>
                     </div>
                     <div class="text-center">
                         <div id="overall-grade" class="text-5xl font-black text-gray-300">--</div>
@@ -48,56 +68,126 @@
                 </div>
             </div>
 
-            <!-- Diagnostic Cards -->
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <!-- Device Info -->
-                <div class="bg-white rounded-lg shadow-md p-4">
-                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Device Info</h3>
-                    <dl id="device-info-list" class="space-y-1 text-sm"></dl>
+            <!-- Fraud Banner (hidden by default) -->
+            <div id="fraud-banner" class="hidden rounded-lg p-4 mb-4 bg-red-50 border border-red-300 shadow-md">
+                <div class="flex items-center gap-2">
+                    <span class="text-red-600 font-bold text-lg">!! Fraud Alert</span>
+                </div>
+                <div id="fraud-details" class="text-red-700 text-sm mt-1"></div>
+            </div>
+
+            <!-- Predicted Failures Banner (hidden by default) -->
+            <div id="predicted-failures-banner" class="hidden rounded-lg p-4 mb-4 bg-red-100 border border-red-400 shadow-md">
+                <div class="font-bold text-red-800 mb-1">Predicted Failures</div>
+                <ul id="predicted-failures-list" class="text-red-700 text-sm list-disc list-inside"></ul>
+            </div>
+
+            <!-- Tabs -->
+            <div class="flex border-b border-gray-200 mb-4 bg-white rounded-t-lg shadow-sm px-2">
+                <button onclick="switchTab('diagnostics')" id="tab-diagnostics" class="tab-btn tab-active">Diagnostics</button>
+                <button onclick="switchTab('history')" id="tab-history" class="tab-btn tab-inactive">History</button>
+                <button onclick="switchTab('pricing')" id="tab-pricing" class="tab-btn tab-inactive">Pricing</button>
+            </div>
+
+            <!-- Tab: Diagnostics -->
+            <div id="panel-diagnostics">
+                <!-- Diagnostic Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- Device Info -->
+                    <div class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Device Info</h3>
+                        <dl id="device-info-list" class="space-y-1 text-sm"></dl>
+                    </div>
+
+                    <!-- Serial Decode -->
+                    <div class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Serial Decode</h3>
+                        <dl id="serial-decode-list" class="space-y-1 text-sm"></dl>
+                    </div>
+
+                    <!-- Battery -->
+                    <div class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Battery</h3>
+                        <div id="battery-info"><span class="text-gray-400">Pending diagnostics</span></div>
+                    </div>
+
+                    <!-- Parts -->
+                    <div class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Parts Originality</h3>
+                        <div id="parts-info"><span class="text-gray-400">Pending diagnostics</span></div>
+                    </div>
+
+                    <!-- Verification -->
+                    <div class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Verification</h3>
+                        <div id="verification-info"><span class="text-gray-400">Pending verification</span></div>
+                    </div>
+
+                    <!-- Crash Analysis Summary -->
+                    <div class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Crash Analysis</h3>
+                        <div id="crash-info"><span class="text-gray-400">Pending analysis</span></div>
+                    </div>
                 </div>
 
-                <!-- Serial Decode -->
-                <div class="bg-white rounded-lg shadow-md p-4">
-                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Serial Decode</h3>
-                    <dl id="serial-decode-list" class="space-y-1 text-sm"></dl>
+                <!-- Crash Detail Panel (expandable) -->
+                <div id="crash-detail-panel" class="hidden mt-4 bg-white rounded-lg shadow-md p-4">
+                    <div class="flex items-center justify-between cursor-pointer" onclick="toggleCrashDetails()">
+                        <h3 class="font-semibold text-gray-700">Crash Details</h3>
+                        <span id="crash-toggle-icon" class="text-gray-400 text-xl">&#9660;</span>
+                    </div>
+                    <div id="crash-detail-content" class="mt-3">
+                        <!-- Subsystem Trends -->
+                        <div id="crash-trends" class="mb-4"></div>
+                        <!-- Individual Matches -->
+                        <div id="crash-matches"></div>
+                    </div>
                 </div>
 
-                <!-- Battery -->
-                <div class="bg-white rounded-lg shadow-md p-4">
-                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Battery</h3>
-                    <div id="battery-info"><span class="text-gray-400">Pending diagnostics</span></div>
-                </div>
-
-                <!-- Parts -->
-                <div class="bg-white rounded-lg shadow-md p-4">
-                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Parts Originality</h3>
-                    <div id="parts-info"><span class="text-gray-400">Pending diagnostics</span></div>
-                </div>
-
-                <!-- Verification -->
-                <div class="bg-white rounded-lg shadow-md p-4">
-                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Verification</h3>
-                    <div id="verification-info"><span class="text-gray-400">Pending verification</span></div>
-                </div>
-
-                <!-- Crash Analysis -->
-                <div class="bg-white rounded-lg shadow-md p-4">
-                    <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Crash Analysis</h3>
-                    <div id="crash-info"><span class="text-gray-400">Pending analysis</span></div>
+                <!-- Actions -->
+                <div class="mt-6 flex gap-3 flex-wrap">
+                    <button onclick="loadSnapshot(currentDevice && currentDevice.info ? currentDevice.info.udid : null)" id="btn-diag" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                        Re-run Diagnostics
+                    </button>
+                    <button onclick="saveToInventory()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+                        Save to Inventory
+                    </button>
+                    <button onclick="location.href='/api/inventory/devices'" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">
+                        View Inventory
+                    </button>
                 </div>
             </div>
 
-            <!-- Actions -->
-            <div class="mt-6 flex gap-3 flex-wrap">
-                <button onclick="runFullDiagnostics()" id="btn-diag" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-                    Run Full Diagnostics
-                </button>
-                <button onclick="saveToInventory()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
-                    Save to Inventory
-                </button>
-                <button onclick="location.href='/api/inventory/devices'" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">
-                    View Inventory
-                </button>
+            <!-- Tab: History -->
+            <div id="panel-history" class="hidden">
+                <div id="history-content">
+                    <div class="text-gray-400 text-center py-8">Loading device history...</div>
+                </div>
+            </div>
+
+            <!-- Tab: Pricing -->
+            <div id="panel-pricing" class="hidden">
+                <div class="bg-white rounded-lg shadow-md p-6 max-w-lg">
+                    <h3 class="font-semibold text-gray-700 mb-4 border-b pb-2">Pricing</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Buy Price ($)</label>
+                            <input type="number" id="buy-price" step="0.01" min="0" placeholder="0.00"
+                                   class="w-full border rounded px-3 py-2 text-sm" oninput="calcProfit()">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-500 mb-1">Sell Price ($)</label>
+                            <input type="number" id="sell-price" step="0.01" min="0" placeholder="0.00"
+                                   class="w-full border rounded px-3 py-2 text-sm" oninput="calcProfit()">
+                        </div>
+                        <div class="border-t pt-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-500 text-sm">Estimated Profit</span>
+                                <span id="profit-display" class="text-2xl font-bold text-gray-300">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </main>
@@ -105,6 +195,8 @@
     <script>
     let ws = null;
     let currentDevice = null;
+    let crashDetailsExpanded = true;
+    let inventoryDeviceId = null;
 
     // -- WebSocket --
 
@@ -113,10 +205,18 @@
         ws = new WebSocket(protocol + '//' + location.host + '/ws');
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
-            if (msg.event === 'device_connected') onDeviceConnected(msg.data);
-            else if (msg.event === 'device_disconnected') onDeviceDisconnected(msg.data);
-            else if (msg.event === 'device_list' && msg.data.udids.length > 0) {
-                fetchDeviceInfo(msg.data.udids[0]);
+            if (msg.event === 'device_connected') {
+                const udid = msg.data && msg.data.udid ? msg.data.udid : (msg.data && msg.data.info ? msg.data.info.udid : null);
+                if (udid) {
+                    // Show device indicator immediately, then load snapshot
+                    el('device-indicator').className = 'w-3 h-3 rounded-full bg-yellow-500';
+                    el('device-status-text').textContent = 'Loading...';
+                    loadSnapshot(udid);
+                }
+            } else if (msg.event === 'device_disconnected') {
+                onDeviceDisconnected();
+            } else if (msg.event === 'device_list' && msg.data.udids && msg.data.udids.length > 0) {
+                loadSnapshot(msg.data.udids[0]);
             }
         };
         ws.onclose = () => setTimeout(connectWebSocket, 3000);
@@ -128,40 +228,310 @@
         }
         fetch('/api/devices/connected')
             .then(r => r.json())
-            .then(udids => { if (udids.length > 0) fetchDeviceInfo(udids[0]); })
+            .then(udids => { if (udids.length > 0) loadSnapshot(udids[0]); })
             .catch(() => {});
     }
 
-    function fetchDeviceInfo(udid) {
-        fetch('/api/devices/info/' + udid)
+    // -- Snapshot-driven load --
+
+    async function loadSnapshot(udid) {
+        if (!udid) return;
+
+        const btn = el('btn-diag');
+        btn.disabled = true;
+        btn.textContent = 'Loading...';
+
+        // Show loading states
+        for (const id of ['battery-info', 'parts-info', 'verification-info', 'crash-info']) {
+            el(id).innerHTML = '<div class="text-gray-400 animate-pulse">Running...</div>';
+        }
+
+        // Show dashboard
+        el('no-device').classList.add('hidden');
+        el('device-dashboard').classList.remove('hidden');
+
+        try {
+            const resp = await fetch('/api/diagnostics/snapshot/' + udid);
+            if (!resp.ok) throw new Error('Snapshot failed: HTTP ' + resp.status);
+            const snapshot = await resp.json();
+
+            // Store current device
+            currentDevice = { udid: udid, info: snapshot.info };
+
+            // Render header
+            const info = snapshot.info || {};
+            el('device-indicator').className = 'w-3 h-3 rounded-full bg-green-500';
+            el('device-status-text').textContent = info.device_name || info.product_type || 'Connected';
+            el('device-model').textContent = info.product_type || 'Unknown Device';
+            el('device-ios').textContent = 'iOS ' + (info.ios_version || '?') + ' (' + (info.build_version || '?') + ')';
+
+            // Render device info
+            renderDeviceInfo(info);
+
+            // Fetch serial decode
+            if (info.serial) fetchSerialDecode(info.serial);
+
+            // Fetch capabilities
+            if (info.product_type) fetchCapabilities(info.product_type);
+
+            // Fetch fraud check
+            if (info.serial && info.model_number && info.product_type) {
+                fetchFraudCheck(info.serial, info.model_number, info.product_type, info.imei || '');
+            }
+
+            // Render diagnostics
+            const diag = snapshot.diagnostics;
+            if (diag) {
+                renderBattery(diag.battery || {});
+                renderParts(diag.parts || {}, diag.storage || {});
+            } else {
+                el('battery-info').innerHTML = '<span class="text-red-500">No data</span>';
+                el('parts-info').innerHTML = '<span class="text-red-500">No data</span>';
+            }
+
+            // Render crash analysis
+            const crashes = snapshot.crash_analysis;
+            if (crashes) {
+                renderCrashes(crashes);
+                renderCrashDetails(crashes);
+                renderPredictedFailures(crashes.predicted_failures || []);
+            } else {
+                el('crash-info').innerHTML = '<span class="text-red-500">No data</span>';
+            }
+
+            // Render verification
+            const verif = snapshot.verification;
+            if (verif) renderVerification(verif);
+            else el('verification-info').innerHTML = '<span class="text-gray-400">No IMEI or API key not configured</span>';
+
+            // Render grade
+            const grade = snapshot.grade;
+            if (grade) renderGrade(grade);
+
+        } catch (e) {
+            console.error('Snapshot error:', e);
+            el('device-indicator').className = 'w-3 h-3 rounded-full bg-red-500';
+            el('device-status-text').textContent = 'Error loading device';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Re-run Diagnostics';
+        }
+    }
+
+    // -- Capabilities --
+
+    function fetchCapabilities(productType) {
+        fetch('/api/devices/capabilities/' + productType)
+            .then(r => { if (!r.ok) throw new Error('Not found'); return r.json(); })
+            .then(cap => renderCapabilityChips(cap))
+            .catch(() => { el('capability-chips').innerHTML = ''; });
+    }
+
+    function renderCapabilityChips(cap) {
+        let html = '';
+        if (cap.name) html += '<span class="chip chip-gray">' + esc(cap.name) + '</span>';
+        if (cap.chip) html += '<span class="chip chip-blue">' + esc(cap.chip) + '</span>';
+        if (cap.checkm8) html += '<span class="chip chip-red">checkm8</span>';
+        if (cap.esim) html += '<span class="chip chip-green">eSIM</span>';
+        if (cap.faceid) html += '<span class="chip chip-blue">Face ID</span>';
+        if (cap.touchid) html += '<span class="chip chip-blue">Touch ID</span>';
+        if (cap.max_ios) html += '<span class="chip chip-gray">Max iOS ' + esc(cap.max_ios) + '</span>';
+        el('capability-chips').innerHTML = html;
+    }
+
+    // -- Fraud Check --
+
+    function fetchFraudCheck(serial, modelNumber, productType, imei) {
+        const params = new URLSearchParams({ serial, model_number: modelNumber, product_type: productType, imei });
+        fetch('/api/serial/fraud-check?' + params.toString())
             .then(r => r.json())
-            .then(info => onDeviceConnected({udid, info}))
-            .catch(e => console.error('Device info failed:', e));
+            .then(result => {
+                if (result.fraud_score > 0 || result.is_suspicious) {
+                    let html = '<div><strong>Fraud Score:</strong> ' + esc(result.fraud_score) + '/100</div>';
+                    if (result.flags && result.flags.length > 0) {
+                        html += '<ul class="list-disc list-inside mt-1">';
+                        result.flags.forEach(f => { html += '<li>' + esc(f) + '</li>'; });
+                        html += '</ul>';
+                    }
+                    if (result.randomized_note) {
+                        html += '<div class="mt-1 text-xs">' + esc(result.randomized_note) + '</div>';
+                    }
+                    el('fraud-details').innerHTML = html;
+                    el('fraud-banner').classList.remove('hidden');
+                } else {
+                    el('fraud-banner').classList.add('hidden');
+                }
+            })
+            .catch(() => { el('fraud-banner').classList.add('hidden'); });
+    }
+
+    // -- Predicted Failures --
+
+    function renderPredictedFailures(failures) {
+        if (!failures || failures.length === 0) {
+            el('predicted-failures-banner').classList.add('hidden');
+            return;
+        }
+        let html = '';
+        failures.forEach(f => { html += '<li>' + esc(f) + '</li>'; });
+        el('predicted-failures-list').innerHTML = html;
+        el('predicted-failures-banner').classList.remove('hidden');
+    }
+
+    // -- Tab Switching --
+
+    function switchTab(tab) {
+        const tabs = ['diagnostics', 'history', 'pricing'];
+        tabs.forEach(t => {
+            el('panel-' + t).classList.toggle('hidden', t !== tab);
+            el('tab-' + t).className = 'tab-btn ' + (t === tab ? 'tab-active' : 'tab-inactive');
+        });
+        if (tab === 'history') loadHistory();
+    }
+
+    // -- History Tab --
+
+    async function loadHistory() {
+        el('history-content').innerHTML = '<div class="text-gray-400 text-center py-8 animate-pulse">Loading...</div>';
+
+        try {
+            // Find device in inventory by UDID
+            const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+            if (!udid) {
+                el('history-content').innerHTML = '<div class="text-gray-400 text-center py-8">No device connected</div>';
+                return;
+            }
+
+            const devicesResp = await fetch('/api/inventory/devices');
+            if (!devicesResp.ok) throw new Error('Failed to fetch inventory');
+            const devices = await devicesResp.json();
+
+            const device = devices.find(d => d.udid === udid);
+            if (!device || !device.id) {
+                el('history-content').innerHTML = '<div class="text-gray-400 text-center py-8">Device not found in inventory. Save it first.</div>';
+                return;
+            }
+
+            inventoryDeviceId = device.id;
+
+            // Fetch history in parallel
+            const [diagResp, verResp, crashResp] = await Promise.allSettled([
+                fetch('/api/inventory/devices/' + device.id + '/diagnostics').then(r => r.json()),
+                fetch('/api/inventory/devices/' + device.id + '/verifications').then(r => r.json()),
+                fetch('/api/inventory/devices/' + device.id + '/crashes').then(r => r.json()),
+            ]);
+
+            const diags = diagResp.status === 'fulfilled' ? diagResp.value : [];
+            const verifs = verResp.status === 'fulfilled' ? verResp.value : [];
+            const crashes = crashResp.status === 'fulfilled' ? crashResp.value : [];
+
+            let html = '';
+
+            // Device record info
+            html += '<div class="bg-white rounded-lg shadow-md p-4 mb-4">';
+            html += '<h3 class="font-semibold text-gray-700 mb-2">Inventory Record</h3>';
+            html += '<div class="grid grid-cols-2 gap-1 text-sm">';
+            html += kv('ID', device.id);
+            html += kv('Status', device.status);
+            html += kv('Grade', device.grade || '-');
+            html += kv('Model', device.model || '-');
+            if (device.buy_price != null) html += kv('Buy Price', '$' + Number(device.buy_price).toFixed(2));
+            if (device.sell_price != null) html += kv('Sell Price', '$' + Number(device.sell_price).toFixed(2));
+            html += '</div></div>';
+
+            // Diagnostics history
+            html += '<div class="bg-white rounded-lg shadow-md p-4 mb-4">';
+            html += '<h3 class="font-semibold text-gray-700 mb-2">Diagnostic History (' + diags.length + ')</h3>';
+            if (diags.length === 0) {
+                html += '<div class="text-gray-400 text-sm">No diagnostic records</div>';
+            } else {
+                html += '<div class="space-y-2">';
+                diags.forEach(d => {
+                    html += '<div class="border rounded p-2 text-sm">';
+                    html += '<div class="text-xs text-gray-400">' + esc(d.timestamp || d.created_at || '-') + '</div>';
+                    if (d.battery_health != null) html += '<div>Battery: ' + esc(d.battery_health) + '%</div>';
+                    if (d.cycle_count != null) html += '<div>Cycles: ' + esc(d.cycle_count) + '</div>';
+                    html += '</div>';
+                });
+                html += '</div>';
+            }
+            html += '</div>';
+
+            // Verification history
+            html += '<div class="bg-white rounded-lg shadow-md p-4 mb-4">';
+            html += '<h3 class="font-semibold text-gray-700 mb-2">Verification History (' + verifs.length + ')</h3>';
+            if (verifs.length === 0) {
+                html += '<div class="text-gray-400 text-sm">No verification records</div>';
+            } else {
+                html += '<div class="space-y-2">';
+                verifs.forEach(v => {
+                    html += '<div class="border rounded p-2 text-sm">';
+                    html += '<div class="text-xs text-gray-400">' + esc(v.timestamp || v.created_at || '-') + '</div>';
+                    if (v.blacklist_status) html += '<div>Blacklist: ' + esc(v.blacklist_status) + '</div>';
+                    if (v.fmi_status) html += '<div>FMI: ' + esc(v.fmi_status) + '</div>';
+                    html += '</div>';
+                });
+                html += '</div>';
+            }
+            html += '</div>';
+
+            // Crash history
+            html += '<div class="bg-white rounded-lg shadow-md p-4 mb-4">';
+            html += '<h3 class="font-semibold text-gray-700 mb-2">Crash History (' + crashes.length + ')</h3>';
+            if (crashes.length === 0) {
+                html += '<div class="text-gray-400 text-sm">No crash records</div>';
+            } else {
+                html += '<div class="space-y-2">';
+                crashes.forEach(c => {
+                    html += '<div class="border rounded p-2 text-sm">';
+                    html += '<div class="text-xs text-gray-400">' + esc(c.timestamp || c.created_at || '-') + '</div>';
+                    if (c.total_reports != null) html += '<div>Reports: ' + esc(c.total_reports) + '</div>';
+                    if (c.risk_score != null) html += '<div>Risk: ' + esc(c.risk_score) + '/100</div>';
+                    html += '</div>';
+                });
+                html += '</div>';
+            }
+            html += '</div>';
+
+            el('history-content').innerHTML = html;
+
+        } catch (e) {
+            console.error('History error:', e);
+            el('history-content').innerHTML = '<div class="text-red-500 text-center py-8">Failed to load history: ' + esc(e.message) + '</div>';
+        }
+    }
+
+    // -- Pricing Tab --
+
+    function calcProfit() {
+        const buy = parseFloat(el('buy-price').value);
+        const sell = parseFloat(el('sell-price').value);
+        const display = el('profit-display');
+
+        if (isNaN(buy) || isNaN(sell)) {
+            display.textContent = '--';
+            display.className = 'text-2xl font-bold text-gray-300';
+            return;
+        }
+
+        const profit = sell - buy;
+        const formatted = (profit >= 0 ? '+' : '') + '$' + profit.toFixed(2);
+        display.textContent = formatted;
+        display.className = 'text-2xl font-bold ' + (profit >= 0 ? 'text-green-600' : 'text-red-600');
     }
 
     // -- Device Events --
 
-    function onDeviceConnected(data) {
-        currentDevice = data;
-        const info = data.info || {};
-
-        el('device-indicator').className = 'w-3 h-3 rounded-full bg-green-500';
-        el('device-status-text').textContent = info.device_name || info.product_type || 'Connected';
-        el('no-device').classList.add('hidden');
-        el('device-dashboard').classList.remove('hidden');
-        el('device-model').textContent = info.product_type || 'Unknown Device';
-        el('device-ios').textContent = 'iOS ' + (info.ios_version || '?') + ' (' + (info.build_version || '?') + ')';
-
-        renderDeviceInfo(info);
-        if (info.serial) fetchSerialDecode(info.serial);
-    }
-
     function onDeviceDisconnected() {
         currentDevice = null;
+        inventoryDeviceId = null;
         el('device-indicator').className = 'w-3 h-3 rounded-full bg-gray-500';
         el('device-status-text').textContent = 'No device connected';
         el('no-device').classList.remove('hidden');
         el('device-dashboard').classList.add('hidden');
+        el('fraud-banner').classList.add('hidden');
+        el('predicted-failures-banner').classList.add('hidden');
+        el('capability-chips').innerHTML = '';
     }
 
     // -- Rendering --
@@ -195,7 +565,7 @@
         el('battery-info').innerHTML = '<div class="text-3xl font-bold ' + color + '">' + bat.health_percent + '%</div>'
             + '<div class="text-sm text-gray-500 mb-2">Health</div>'
             + '<div class="grid grid-cols-2 gap-1 text-sm">'
-            + kv('Cycles', bat.cycle_count) + kv('Temp', bat.temperature + '°C')
+            + kv('Cycles', bat.cycle_count) + kv('Temp', bat.temperature + ' C')
             + kv('Design', bat.design_capacity + ' mAh') + kv('Current', bat.nominal_capacity + ' mAh')
             + kv('Charging', bat.is_charging ? 'Yes' : 'No') + kv('Voltage', bat.voltage + ' mV')
             + '</div>';
@@ -255,6 +625,57 @@
         el('crash-info').innerHTML = html;
     }
 
+    // -- Crash Details (expandable) --
+
+    function renderCrashDetails(analysis) {
+        if (!analysis || analysis.total_reports === 0 || !analysis.matches || analysis.matches.length === 0) {
+            el('crash-detail-panel').classList.add('hidden');
+            return;
+        }
+
+        el('crash-detail-panel').classList.remove('hidden');
+
+        // Trends
+        let trendsHtml = '';
+        if (analysis.trends && Object.keys(analysis.trends).length > 0) {
+            trendsHtml += '<h4 class="text-sm font-semibold text-gray-600 mb-2">Subsystem Trends</h4>';
+            trendsHtml += '<div class="grid grid-cols-2 md:grid-cols-3 gap-2">';
+            for (const [sub, trend] of Object.entries(analysis.trends)) {
+                const arrow = trend === 'worsening' ? '&#9650;' : trend === 'improving' ? '&#9660;' : '&#9679;';
+                const trendClass = 'trend-' + trend;
+                trendsHtml += '<div class="flex items-center gap-2 text-sm">'
+                    + '<span class="' + trendClass + '">' + arrow + '</span>'
+                    + '<span class="text-gray-600">' + esc(sub) + '</span>'
+                    + '</div>';
+            }
+            trendsHtml += '</div>';
+        }
+        el('crash-trends').innerHTML = trendsHtml;
+
+        // Individual matches
+        let matchHtml = '<h4 class="text-sm font-semibold text-gray-600 mb-2">Matched Crashes (' + analysis.matches.length + ')</h4>';
+        matchHtml += '<div class="space-y-2 max-h-96 overflow-y-auto">';
+        analysis.matches.forEach(m => {
+            matchHtml += '<div class="border rounded p-2 text-sm">';
+            matchHtml += '<div class="flex items-center gap-2 mb-1">';
+            matchHtml += '<span class="chip severity-' + m.severity + '">S' + m.severity + '</span>';
+            matchHtml += '<span class="font-medium text-gray-700">' + esc(m.subsystem) + '</span>';
+            matchHtml += '</div>';
+            matchHtml += '<div class="text-gray-600">' + esc(m.description) + '</div>';
+            if (m.process) matchHtml += '<div class="text-xs text-gray-400 mt-1">Process: ' + esc(m.process) + '</div>';
+            if (m.filename) matchHtml += '<div class="text-xs text-gray-400">File: ' + esc(m.filename) + '</div>';
+            matchHtml += '</div>';
+        });
+        matchHtml += '</div>';
+        el('crash-matches').innerHTML = matchHtml;
+    }
+
+    function toggleCrashDetails() {
+        crashDetailsExpanded = !crashDetailsExpanded;
+        el('crash-detail-content').classList.toggle('hidden', !crashDetailsExpanded);
+        el('crash-toggle-icon').innerHTML = crashDetailsExpanded ? '&#9660;' : '&#9654;';
+    }
+
     function renderGrade(grade) {
         const colors = {green: 'text-green-600', yellow: 'text-yellow-600', red: 'text-red-600', gray: 'text-gray-400'};
         el('overall-grade').className = 'text-5xl font-black ' + (colors[grade.color] || 'text-gray-400');
@@ -262,87 +683,32 @@
         el('grade-label').textContent = grade.is_partial ? 'Partial (cosmetic not entered)' : 'Score: ' + grade.overall_score.toFixed(2);
     }
 
-    // -- Full Diagnostics Flow --
-
-    async function runFullDiagnostics() {
-        if (!currentDevice) return;
-        const info = currentDevice.info || {};
-        const udid = info.udid;
-        if (!udid) return;
-
-        const btn = el('btn-diag');
-        btn.disabled = true;
-        btn.textContent = 'Running...';
-
-        // Show loading states
-        for (const id of ['battery-info', 'parts-info', 'verification-info', 'crash-info']) {
-            el(id).innerHTML = '<div class="text-gray-400 animate-pulse">Running...</div>';
-        }
-
-        try {
-            // Run diagnostics, crashes, verification in parallel
-            const [diagResp, crashResp, verResp] = await Promise.allSettled([
-                fetch('/api/diagnostics/run/' + udid).then(r => r.json()),
-                fetch('/api/diagnostics/crashes/' + udid).then(r => r.json()),
-                info.imei
-                    ? fetch('/api/verification/check/' + info.imei + '?udid=' + udid).then(r => r.json())
-                    : Promise.resolve(null),
-            ]);
-
-            const diag = diagResp.status === 'fulfilled' ? diagResp.value : null;
-            const crashes = crashResp.status === 'fulfilled' ? crashResp.value : null;
-            const verif = verResp.status === 'fulfilled' ? verResp.value : null;
-
-            if (diag) {
-                renderBattery(diag.battery || {});
-                renderParts(diag.parts || {}, diag.storage || {});
-            } else {
-                el('battery-info').innerHTML = '<span class="text-red-500">Failed</span>';
-                el('parts-info').innerHTML = '<span class="text-red-500">Failed</span>';
-            }
-
-            if (crashes) renderCrashes(crashes);
-            else el('crash-info').innerHTML = '<span class="text-red-500">Failed</span>';
-
-            if (verif) renderVerification(verif);
-            else el('verification-info').innerHTML = '<span class="text-gray-400">No IMEI or API key not configured</span>';
-
-            // Compute grade from pre-fetched results (POST to avoid re-running diagnostics)
-            if (diag && crashes) {
-                const gradeResp = await fetch('/api/diagnostics/grade', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        diagnostics: diag,
-                        crashes: crashes,
-                        verification: verif || {},
-                    }),
-                });
-                if (gradeResp.ok) renderGrade(await gradeResp.json());
-            }
-        } catch (e) {
-            console.error('Diagnostics error:', e);
-        } finally {
-            btn.disabled = false;
-            btn.textContent = 'Run Full Diagnostics';
-        }
-    }
+    // -- Save to Inventory --
 
     async function saveToInventory() {
-        if (!currentDevice?.info) return;
+        if (!currentDevice || !currentDevice.info) return;
         const info = currentDevice.info;
+
+        const buyPrice = parseFloat(el('buy-price').value);
+        const sellPrice = parseFloat(el('sell-price').value);
+
         try {
+            const body = {
+                udid: info.udid, serial: info.serial || '', imei: info.imei || '',
+                model: info.product_type || '', ios_version: info.ios_version || '',
+                status: 'intake',
+            };
+            if (!isNaN(buyPrice)) body.buy_price = buyPrice;
+            if (!isNaN(sellPrice)) body.sell_price = sellPrice;
+
             const resp = await fetch('/api/inventory/devices', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    udid: info.udid, serial: info.serial || '', imei: info.imei || '',
-                    model: info.product_type || '', ios_version: info.ios_version || '',
-                    status: 'intake',
-                }),
+                body: JSON.stringify(body),
             });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const result = await resp.json();
+            inventoryDeviceId = result.id;
             alert('Saved to inventory (ID: ' + result.id + ')');
         } catch (e) {
             alert('Failed to save: ' + e.message);
@@ -363,7 +729,7 @@
     }
     function kv(k, v) { return '<div><span class="text-gray-500">' + esc(k) + ':</span> ' + esc(v) + '</div>'; }
     function statusRow(label, val) {
-        const text = val === true ? '✓ Original' : val === false ? '✗ Replaced' : '? Unknown';
+        const text = val === true ? 'Original' : val === false ? 'Replaced' : '? Unknown';
         const c = val === true ? 'text-green-600' : val === false ? 'text-red-600' : 'text-gray-400';
         return '<div class="flex justify-between text-sm"><span class="text-gray-500">' + esc(label) + '</span><span class="' + c + '">' + text + '</span></div>';
     }
