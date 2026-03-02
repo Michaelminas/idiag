@@ -17,7 +17,7 @@ from typing import Generator
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -44,6 +44,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 # -- FastAPI app --
 
 app = FastAPI(title="iDiag", version=settings.app_version, lifespan=lifespan)
+
+# Global exception handler — catch unhandled errors, return structured JSON
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled error on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "internal_error", "message": "An unexpected error occurred"},
+    )
 
 # Routes
 app.include_router(devices.router)
