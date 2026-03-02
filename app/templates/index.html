@@ -87,6 +87,7 @@
                 <button onclick="switchTab('diagnostics')" id="tab-diagnostics" class="tab-btn tab-active">Diagnostics</button>
                 <button onclick="switchTab('history')" id="tab-history" class="tab-btn tab-inactive">History</button>
                 <button onclick="switchTab('pricing')" id="tab-pricing" class="tab-btn tab-inactive">Pricing</button>
+                <button onclick="switchTab('syslog')" id="tab-syslog" class="tab-btn tab-inactive">Syslog</button>
             </div>
 
             <!-- Tab: Diagnostics -->
@@ -162,6 +163,39 @@
             <div id="panel-history" class="hidden">
                 <div id="history-content">
                     <div class="text-gray-400 text-center py-8">Loading device history...</div>
+                </div>
+            </div>
+
+            <!-- Tab: Syslog -->
+            <div id="panel-syslog" class="hidden">
+                <div class="bg-gray-900 rounded-lg shadow-md overflow-hidden">
+                    <!-- Syslog Controls -->
+                    <div class="flex items-center gap-3 px-4 py-2 bg-gray-800 border-b border-gray-700">
+                        <select id="syslog-process" onchange="updateSyslogFilter()" class="bg-gray-700 text-gray-200 text-xs rounded px-2 py-1 border border-gray-600">
+                            <option value="">All Processes</option>
+                        </select>
+                        <select id="syslog-level" onchange="updateSyslogFilter()" class="bg-gray-700 text-gray-200 text-xs rounded px-2 py-1 border border-gray-600">
+                            <option value="">All Levels</option>
+                            <option value="Emergency">Emergency</option>
+                            <option value="Alert">Alert</option>
+                            <option value="Critical">Critical</option>
+                            <option value="Error">Error</option>
+                            <option value="Warning">Warning</option>
+                            <option value="Notice">Notice</option>
+                            <option value="Info">Info</option>
+                            <option value="Debug">Debug</option>
+                        </select>
+                        <input type="text" id="syslog-keyword" placeholder="Search..." oninput="updateSyslogFilter()"
+                               class="bg-gray-700 text-gray-200 text-xs rounded px-2 py-1 border border-gray-600 flex-1">
+                        <button onclick="toggleSyslogScroll()" id="syslog-scroll-btn"
+                                class="text-xs px-2 py-1 rounded bg-green-700 text-green-200 hover:bg-green-600">Auto-scroll ON</button>
+                        <button onclick="clearSyslog()" class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600">Clear</button>
+                        <span id="syslog-status" class="text-xs text-gray-500">Disconnected</span>
+                    </div>
+                    <!-- Syslog Output -->
+                    <div id="syslog-output" class="font-mono text-xs leading-5 p-3 overflow-y-auto" style="height: 500px; color: #d1d5db;">
+                        <div class="text-gray-500 text-center py-8">Open this tab with a device connected to start streaming syslog</div>
+                    </div>
                 </div>
             </div>
 
@@ -399,12 +433,14 @@
     // -- Tab Switching --
 
     function switchTab(tab) {
-        const tabs = ['diagnostics', 'history', 'pricing'];
+        const tabs = ['diagnostics', 'history', 'pricing', 'syslog'];
         tabs.forEach(t => {
             el('panel-' + t).classList.toggle('hidden', t !== tab);
             el('tab-' + t).className = 'tab-btn ' + (t === tab ? 'tab-active' : 'tab-inactive');
         });
         if (tab === 'history') loadHistory();
+        if (tab === 'syslog') startSyslog();
+        if (tab !== 'syslog') stopSyslog();
     }
 
     // -- History Tab --
@@ -791,6 +827,125 @@
     }
     function verRow(label, value, colorClass) {
         return '<div class="flex justify-between"><span class="text-gray-500">' + esc(label) + '</span><span class="font-semibold ' + colorClass + '">' + esc(value) + '</span></div>';
+    }
+
+    // -- Syslog Viewer --
+
+    let syslogWs = null;
+    let syslogAutoScroll = true;
+    let syslogProcesses = new Set();
+
+    const levelColors = {
+        Emergency: '#ef4444', Alert: '#ef4444', Critical: '#ef4444',
+        Error: '#f97316', Warning: '#eab308',
+        Notice: '#3b82f6', Info: '#d1d5db', Debug: '#6b7280',
+    };
+
+    function startSyslog() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) {
+            el('syslog-output').innerHTML = '<div class="text-gray-500 text-center py-8">No device connected</div>';
+            return;
+        }
+        if (syslogWs && syslogWs.readyState === WebSocket.OPEN) return;
+
+        el('syslog-output').innerHTML = '';
+        el('syslog-status').textContent = 'Connecting...';
+        el('syslog-status').className = 'text-xs text-yellow-500';
+
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        syslogWs = new WebSocket(protocol + '//' + location.host + '/ws/syslog/' + udid);
+
+        syslogWs.onopen = () => {
+            el('syslog-status').textContent = 'Connected';
+            el('syslog-status').className = 'text-xs text-green-500';
+            sendSyslogFilter();
+        };
+
+        syslogWs.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            if (msg.event === 'syslog') appendSyslogEntry(msg.data);
+        };
+
+        syslogWs.onclose = () => {
+            el('syslog-status').textContent = 'Disconnected';
+            el('syslog-status').className = 'text-xs text-gray-500';
+            syslogWs = null;
+        };
+
+        syslogWs.onerror = () => {
+            el('syslog-status').textContent = 'Error';
+            el('syslog-status').className = 'text-xs text-red-500';
+        };
+    }
+
+    function stopSyslog() {
+        if (syslogWs) {
+            syslogWs.close();
+            syslogWs = null;
+        }
+    }
+
+    function sendSyslogFilter() {
+        if (!syslogWs || syslogWs.readyState !== WebSocket.OPEN) return;
+        syslogWs.send(JSON.stringify({
+            process: el('syslog-process').value || null,
+            level: el('syslog-level').value || null,
+            keyword: el('syslog-keyword').value || null,
+        }));
+    }
+
+    function updateSyslogFilter() {
+        // Reconnect with new filter (server-side filtering)
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        stopSyslog();
+        setTimeout(startSyslog, 100);
+    }
+
+    function appendSyslogEntry(entry) {
+        const out = el('syslog-output');
+        const line = document.createElement('div');
+        const color = levelColors[entry.level] || '#d1d5db';
+        const ts = entry.timestamp ? entry.timestamp.split('T')[1] || entry.timestamp : '';
+
+        line.innerHTML = '<span style="color:#6b7280">' + esc(ts.substring(0, 8)) + '</span> '
+            + '<span style="color:' + color + ';font-weight:600">' + esc(entry.level.substring(0, 4).toUpperCase()) + '</span> '
+            + '<span style="color:#93c5fd">' + esc(entry.process) + '</span>'
+            + '<span style="color:#6b7280">[' + entry.pid + ']</span> '
+            + esc(entry.message);
+
+        out.appendChild(line);
+
+        // Track processes for filter dropdown
+        if (entry.process && !syslogProcesses.has(entry.process)) {
+            syslogProcesses.add(entry.process);
+            const opt = document.createElement('option');
+            opt.value = entry.process;
+            opt.textContent = entry.process;
+            el('syslog-process').appendChild(opt);
+        }
+
+        // Keep max 2000 lines in DOM
+        while (out.children.length > 2000) out.removeChild(out.firstChild);
+
+        if (syslogAutoScroll) out.scrollTop = out.scrollHeight;
+    }
+
+    function toggleSyslogScroll() {
+        syslogAutoScroll = !syslogAutoScroll;
+        const btn = el('syslog-scroll-btn');
+        btn.textContent = syslogAutoScroll ? 'Auto-scroll ON' : 'Auto-scroll OFF';
+        btn.className = syslogAutoScroll
+            ? 'text-xs px-2 py-1 rounded bg-green-700 text-green-200 hover:bg-green-600'
+            : 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600';
+    }
+
+    function clearSyslog() {
+        el('syslog-output').innerHTML = '';
+        syslogProcesses.clear();
+        const sel = el('syslog-process');
+        sel.innerHTML = '<option value="">All Processes</option>';
     }
 
     // Init
