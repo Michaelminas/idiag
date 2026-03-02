@@ -509,6 +509,12 @@
     async function loadSnapshot(udid) {
         if (!udid) return;
 
+        // Reset tab loaded flags for fresh data
+        firmwareLoaded = false;
+        toolsLoaded = false;
+        photosLoaded = false;
+        reportsLoaded = false;
+
         const btn = el('btn-diag');
         btn.disabled = true;
         btn.textContent = 'Loading...';
@@ -588,6 +594,12 @@
                 fetchMarketPrice(info.device_name || model, storageGb, gradeStr);
             }
 
+            // Pre-fetch tool availability for Tools tab
+            fetch('/api/tools/availability')
+                .then(r => r.ok ? r.json() : {})
+                .then(a => { toolAvailability = a; })
+                .catch(() => {});
+
         } catch (e) {
             console.error('Snapshot error:', e);
             el('device-indicator').className = 'w-3 h-3 rounded-full bg-red-500';
@@ -603,7 +615,7 @@
     function fetchCapabilities(productType) {
         fetch('/api/devices/capabilities/' + productType)
             .then(r => { if (!r.ok) throw new Error('Not found'); return r.json(); })
-            .then(cap => renderCapabilityChips(cap))
+            .then(cap => { renderCapabilityChips(cap); deviceCapabilities = cap; })
             .catch(() => { el('capability-chips').innerHTML = ''; });
     }
 
