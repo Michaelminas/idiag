@@ -23,6 +23,8 @@
         .tab-inactive { border-bottom: 2px solid transparent; color: #6b7280; }
         .tab-btn { padding: 0.5rem 1rem; cursor: pointer; transition: all 0.15s; }
         .tab-btn:hover { color: #2563eb; }
+        .card-disabled .card-body { opacity: 0.5; pointer-events: none; }
+        .card-disabled-reason { background: #f3f4f6; color: #6b7280; font-size: 0.75rem; padding: 4px 12px; border-radius: 4px; margin-bottom: 8px; }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
@@ -83,11 +85,15 @@
             </div>
 
             <!-- Tabs -->
-            <div class="flex border-b border-gray-200 mb-4 bg-white rounded-t-lg shadow-sm px-2">
-                <button onclick="switchTab('diagnostics')" id="tab-diagnostics" class="tab-btn tab-active">Diagnostics</button>
-                <button onclick="switchTab('history')" id="tab-history" class="tab-btn tab-inactive">History</button>
-                <button onclick="switchTab('pricing')" id="tab-pricing" class="tab-btn tab-inactive">Pricing</button>
-                <button onclick="switchTab('syslog')" id="tab-syslog" class="tab-btn tab-inactive">Syslog</button>
+            <div class="flex border-b border-gray-200 mb-4 bg-white rounded-t-lg shadow-sm px-2 overflow-x-auto">
+                <button onclick="switchTab('diagnostics')" id="tab-diagnostics" class="tab-btn tab-active whitespace-nowrap">Diagnostics</button>
+                <button onclick="switchTab('firmware')" id="tab-firmware" class="tab-btn tab-inactive whitespace-nowrap">Firmware</button>
+                <button onclick="switchTab('tools')" id="tab-tools" class="tab-btn tab-inactive whitespace-nowrap">Tools</button>
+                <button onclick="switchTab('photos')" id="tab-photos" class="tab-btn tab-inactive whitespace-nowrap">Photos</button>
+                <button onclick="switchTab('reports')" id="tab-reports" class="tab-btn tab-inactive whitespace-nowrap">Reports</button>
+                <button onclick="switchTab('history')" id="tab-history" class="tab-btn tab-inactive whitespace-nowrap">History</button>
+                <button onclick="switchTab('pricing')" id="tab-pricing" class="tab-btn tab-inactive whitespace-nowrap">Pricing</button>
+                <button onclick="switchTab('syslog')" id="tab-syslog" class="tab-btn tab-inactive whitespace-nowrap">Syslog</button>
             </div>
 
             <!-- Tab: Diagnostics -->
@@ -233,6 +239,26 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Tab: Firmware -->
+            <div id="panel-firmware" class="hidden">
+                <div class="text-gray-400 text-center py-8">Loading firmware info...</div>
+            </div>
+
+            <!-- Tab: Tools -->
+            <div id="panel-tools" class="hidden">
+                <div class="text-gray-400 text-center py-8">Loading tools...</div>
+            </div>
+
+            <!-- Tab: Photos -->
+            <div id="panel-photos" class="hidden">
+                <div class="text-gray-400 text-center py-8">Loading photos...</div>
+            </div>
+
+            <!-- Tab: Reports -->
+            <div id="panel-reports" class="hidden">
+                <div class="text-gray-400 text-center py-8">Loading reports...</div>
+            </div>
         </div>
     </main>
 
@@ -241,6 +267,12 @@
     let currentDevice = null;
     let crashDetailsExpanded = true;
     let inventoryDeviceId = null;
+    let toolAvailability = {};
+    let deviceCapabilities = {};
+    let firmwareLoaded = false;
+    let toolsLoaded = false;
+    let photosLoaded = false;
+    let reportsLoaded = false;
 
     // -- WebSocket --
 
@@ -433,7 +465,7 @@
     // -- Tab Switching --
 
     function switchTab(tab) {
-        const tabs = ['diagnostics', 'history', 'pricing', 'syslog'];
+        const tabs = ['diagnostics', 'firmware', 'tools', 'photos', 'reports', 'history', 'pricing', 'syslog'];
         tabs.forEach(t => {
             el('panel-' + t).classList.toggle('hidden', t !== tab);
             el('tab-' + t).className = 'tab-btn ' + (t === tab ? 'tab-active' : 'tab-inactive');
@@ -441,6 +473,10 @@
         if (tab === 'history') loadHistory();
         if (tab === 'syslog') startSyslog();
         if (tab !== 'syslog') stopSyslog();
+        if (tab === 'firmware') loadFirmwareTab();
+        if (tab === 'tools') loadToolsTab();
+        if (tab === 'photos') loadPhotosTab();
+        if (tab === 'reports') loadReportsTab();
     }
 
     // -- History Tab --
@@ -624,6 +660,12 @@
         el('fraud-banner').classList.add('hidden');
         el('predicted-failures-banner').classList.add('hidden');
         el('capability-chips').innerHTML = '';
+        toolAvailability = {};
+        deviceCapabilities = {};
+        firmwareLoaded = false;
+        toolsLoaded = false;
+        photosLoaded = false;
+        reportsLoaded = false;
     }
 
     // -- Rendering --
@@ -947,6 +989,14 @@
         const sel = el('syslog-process');
         sel.innerHTML = '<option value="">All Processes</option>';
     }
+
+    // -- Stub functions for new tabs (to be implemented in later tasks) --
+    function loadFirmwareTab() {}
+    function loadToolsTab() {}
+    function loadPhotosTab() {}
+    function loadReportsTab() {}
+    function setCardDisabled(cardId, reason) {}
+    function clearCardDisabled(cardId) {}
 
     // Init
     connectWebSocket();
