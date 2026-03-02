@@ -6,10 +6,14 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.models.tools import SyslogFilter
 from app.services import device_service
+from app.services.syslog_service import create_syslog_stream, filter_entry, parse_syslog_line
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+SYSLOG_FILTER_TIMEOUT = 5.0  # seconds to wait for initial filter JSON from client
 
 # Connected WebSocket clients — safe under single-threaded asyncio (no await between mutations)
 _clients: set[WebSocket] = set()
@@ -53,6 +57,53 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     finally:
         _clients.discard(ws)
         logger.info("WebSocket client disconnected (%d remaining)", len(_clients))
+
+
+@router.websocket("/ws/syslog/{udid}")
+async def syslog_websocket(ws: WebSocket, udid: str) -> None:
+    """Stream real-time syslog from a device, applying an optional client-supplied filter."""
+    await ws.accept()
+    logger.info("Syslog WS connected for device %s", udid)
+
+    # Wait for an initial filter message from the client (with timeout).
+    filt = SyslogFilter()
+    try:
+        raw = await asyncio.wait_for(ws.receive_text(), timeout=SYSLOG_FILTER_TIMEOUT)
+        data = json.loads(raw)
+        filt = SyslogFilter(**data)
+    except asyncio.TimeoutError:
+        logger.debug("No syslog filter received within timeout — using defaults")
+    except Exception:
+        logger.debug("Invalid syslog filter message — using defaults")
+
+    try:
+        # create_syslog_stream is blocking (generator); run iteration in a thread.
+        stream = create_syslog_stream(udid)
+
+        def _next_line():
+            """Get the next line from the blocking generator (or raise StopIteration)."""
+            return next(stream)
+
+        while True:
+            try:
+                line = await asyncio.to_thread(_next_line)
+            except StopIteration:
+                break
+
+            entry = parse_syslog_line(line)
+            if entry is None:
+                continue
+            if not filter_entry(entry, filt):
+                continue
+
+            await ws.send_json({"event": "syslog", "data": entry.model_dump(mode="json")})
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.error("Syslog WS error for %s: %s", udid, exc)
+    finally:
+        logger.info("Syslog WS disconnected for device %s", udid)
 
 
 async def device_poll_loop() -> None:
