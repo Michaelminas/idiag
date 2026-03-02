@@ -242,7 +242,43 @@
 
             <!-- Tab: Firmware -->
             <div id="panel-firmware" class="hidden">
-                <div class="text-gray-400 text-center py-8">Loading firmware info...</div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- Signed Versions -->
+                    <div class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Signed Versions</h3>
+                        <div id="fw-signed"><span class="text-gray-400">Connect a device to check</span></div>
+                    </div>
+
+                    <!-- IPSW Cache -->
+                    <div class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">IPSW Cache</h3>
+                        <div id="fw-cache"><span class="text-gray-400">Loading...</span></div>
+                    </div>
+
+                    <!-- SHSH Blobs -->
+                    <div id="fw-shsh-card" class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">SHSH Blobs</h3>
+                        <div id="fw-shsh"><span class="text-gray-400">Connect a device to manage blobs</span></div>
+                    </div>
+
+                    <!-- Device Mode -->
+                    <div id="fw-mode-card" class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Device Mode</h3>
+                        <div id="fw-mode"><span class="text-gray-400">Connect a device</span></div>
+                    </div>
+
+                    <!-- Restore -->
+                    <div id="fw-restore-card" class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Restore</h3>
+                        <div id="fw-restore"><span class="text-gray-400">Connect a device to restore</span></div>
+                    </div>
+
+                    <!-- Wipe & Certificate -->
+                    <div id="fw-wipe-card" class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Wipe &amp; Certificate</h3>
+                        <div id="fw-wipe"><span class="text-gray-400">Connect a device to wipe</span></div>
+                    </div>
+                </div>
             </div>
 
             <!-- Tab: Tools -->
@@ -991,12 +1027,295 @@
     }
 
     // -- Stub functions for new tabs (to be implemented in later tasks) --
-    function loadFirmwareTab() {}
+    // -- Firmware Tab --
+
+    async function loadFirmwareTab() {
+        if (firmwareLoaded) return;
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        const model = currentDevice && currentDevice.info ? currentDevice.info.product_type : null;
+
+        // Always load cache (doesn't need device)
+        fetchFirmwareCache();
+
+        if (!udid || !model) {
+            setCardDisabled('fw-mode-card', 'No device connected');
+            setCardDisabled('fw-restore-card', 'No device connected');
+            setCardDisabled('fw-wipe-card', 'No device connected');
+            return;
+        }
+
+        firmwareLoaded = true;
+        fetchSignedVersions(model);
+        fetchDeviceMode(udid);
+        fetchSHSHBlobs();
+        renderRestoreCard(model);
+        renderWipeCard(udid);
+    }
+
+    function fetchSignedVersions(model) {
+        el('fw-signed').innerHTML = '<div class="text-gray-400 animate-pulse">Checking...</div>';
+        fetch('/api/firmware/signed/' + model)
+            .then(r => r.json())
+            .then(versions => {
+                if (!versions || versions.length === 0) {
+                    el('fw-signed').innerHTML = '<div class="text-gray-400">No signed versions found</div>';
+                    return;
+                }
+                let html = '<div class="space-y-1 text-sm max-h-48 overflow-y-auto">';
+                versions.forEach(v => {
+                    html += '<div class="flex justify-between items-center border-b py-1">'
+                        + '<span>' + esc(v.version) + '</span>'
+                        + '<span class="text-xs text-gray-400">' + esc(v.build_id || '') + '</span>'
+                        + '<button onclick="downloadIPSW(\'' + esc(v.version) + '\',\'' + esc(v.build_id || '') + '\')" '
+                        + 'class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded hover:bg-blue-200">Download</button>'
+                        + '</div>';
+                });
+                html += '</div>';
+                el('fw-signed').innerHTML = html;
+            })
+            .catch(() => { el('fw-signed').innerHTML = '<span class="text-red-500">Failed to fetch</span>'; });
+    }
+
+    function fetchFirmwareCache() {
+        el('fw-cache').innerHTML = '<div class="text-gray-400 animate-pulse">Loading...</div>';
+        fetch('/api/firmware/cache')
+            .then(r => r.json())
+            .then(entries => {
+                if (!entries || entries.length === 0) {
+                    el('fw-cache').innerHTML = '<div class="text-gray-400">No cached IPSW files</div>';
+                    return;
+                }
+                let html = '<div class="space-y-1 text-sm max-h-48 overflow-y-auto">';
+                entries.forEach(e => {
+                    const sizeStr = e.size_bytes ? (e.size_bytes / 1073741824).toFixed(1) + ' GB' : '?';
+                    html += '<div class="flex justify-between items-center border-b py-1">'
+                        + '<div><span class="font-medium">' + esc(e.model) + '</span> '
+                        + '<span class="text-gray-400">' + esc(e.version) + '</span></div>'
+                        + '<span class="text-xs text-gray-400">' + sizeStr + '</span>'
+                        + '<button onclick="evictIPSW(\'' + esc(e.model) + '\',\'' + esc(e.version) + '\')" '
+                        + 'class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded hover:bg-red-200">Remove</button>'
+                        + '</div>';
+                });
+                html += '</div>';
+                el('fw-cache').innerHTML = html;
+            })
+            .catch(() => { el('fw-cache').innerHTML = '<span class="text-red-500">Failed to load</span>'; });
+    }
+
+    function fetchSHSHBlobs() {
+        const info = currentDevice ? currentDevice.info : null;
+        if (!info) {
+            el('fw-shsh').innerHTML = '<div class="text-gray-400">Connect a device to manage blobs</div>';
+            return;
+        }
+        el('fw-shsh').innerHTML = '<div class="text-gray-400 animate-pulse">Loading...</div>';
+        fetch('/api/firmware/shsh')
+            .then(r => r.json())
+            .then(blobs => {
+                let html = '<button onclick="saveSHSHBlobs()" class="text-xs bg-green-100 text-green-700 px-3 py-1 rounded hover:bg-green-200 mb-2">Save SHSH Blobs</button>';
+                if (!blobs || blobs.length === 0) {
+                    html += '<div class="text-gray-400 text-sm">No saved blobs</div>';
+                } else {
+                    html += '<div class="space-y-1 text-sm max-h-40 overflow-y-auto">';
+                    blobs.forEach(b => {
+                        html += '<div class="border-b py-1"><span class="font-medium">' + esc(b.version || b.ios_version || '?') + '</span>'
+                            + ' <span class="text-xs text-gray-400">' + esc(b.ecid || '') + '</span></div>';
+                    });
+                    html += '</div>';
+                }
+                el('fw-shsh').innerHTML = html;
+            })
+            .catch(() => { el('fw-shsh').innerHTML = '<span class="text-red-500">Failed to load</span>'; });
+    }
+
+    async function saveSHSHBlobs() {
+        const info = currentDevice ? currentDevice.info : null;
+        if (!info || !info.ecid) { alert('No ECID available'); return; }
+        try {
+            const resp = await fetch('/api/firmware/shsh?ecid=' + info.ecid + '&model=' + (info.product_type || '') + '&version=' + (info.ios_version || ''), { method: 'POST' });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const result = await resp.json();
+            alert('SHSH blobs saved: ' + (result.path || 'OK'));
+            fetchSHSHBlobs();
+        } catch (e) { alert('Failed: ' + e.message); }
+    }
+
+    function fetchDeviceMode(udid) {
+        el('fw-mode').innerHTML = '<div class="text-gray-400 animate-pulse">Checking...</div>';
+        fetch('/api/firmware/mode/' + udid)
+            .then(r => r.json())
+            .then(data => {
+                const modeColors = { normal: 'text-green-600', recovery: 'text-yellow-600', dfu: 'text-red-600', unknown: 'text-gray-400' };
+                const mode = data.mode || 'unknown';
+                let html = '<div class="text-lg font-bold ' + (modeColors[mode] || 'text-gray-400') + ' mb-3">' + esc(mode.toUpperCase()) + '</div>';
+                html += '<div class="flex gap-2 flex-wrap">';
+                html += '<button onclick="enterRecovery()" class="text-xs bg-yellow-100 text-yellow-700 px-3 py-1 rounded hover:bg-yellow-200">Enter Recovery</button>';
+                html += '<button onclick="enterDFU()" class="text-xs bg-red-100 text-red-700 px-3 py-1 rounded hover:bg-red-200">Enter DFU</button>';
+                html += '<button onclick="exitRecovery()" class="text-xs bg-green-100 text-green-700 px-3 py-1 rounded hover:bg-green-200">Exit Recovery</button>';
+                html += '</div>';
+                el('fw-mode').innerHTML = html;
+            })
+            .catch(() => { el('fw-mode').innerHTML = '<span class="text-red-500">Failed to detect mode</span>'; });
+    }
+
+    async function enterRecovery() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        try {
+            const r = await fetch('/api/firmware/recovery/' + udid, { method: 'POST' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            alert('Recovery mode entered');
+            fetchDeviceMode(udid);
+        } catch (e) { alert('Failed: ' + e.message); }
+    }
+
+    async function enterDFU() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        try {
+            const r = await fetch('/api/firmware/dfu/' + udid, { method: 'POST' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const data = await r.json();
+            alert(data.message || 'DFU mode: complete button combo now');
+            fetchDeviceMode(udid);
+        } catch (e) { alert('Failed: ' + e.message); }
+    }
+
+    async function exitRecovery() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        try {
+            const r = await fetch('/api/firmware/recovery/' + udid, { method: 'DELETE' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            alert('Exited recovery mode');
+            fetchDeviceMode(udid);
+        } catch (e) { alert('Failed: ' + e.message); }
+    }
+
+    function renderRestoreCard(model) {
+        let html = '<div class="space-y-2">';
+        html += '<div class="text-sm text-gray-500 mb-2">Restore firmware on connected device</div>';
+        html += '<div class="flex gap-2">';
+        html += '<input type="text" id="restore-version" placeholder="iOS version (optional)" class="flex-1 border rounded px-2 py-1 text-sm">';
+        html += '<button onclick="startRestore()" class="text-xs bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700">Restore</button>';
+        html += '</div>';
+        html += '<div id="restore-progress" class="hidden mt-2"><div class="bg-gray-200 rounded-full h-2"><div id="restore-bar" class="bg-blue-600 h-2 rounded-full" style="width:0%"></div></div><div id="restore-status" class="text-xs text-gray-500 mt-1"></div></div>';
+        html += '</div>';
+        el('fw-restore').innerHTML = html;
+    }
+
+    async function startRestore() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        const model = currentDevice && currentDevice.info ? currentDevice.info.product_type : null;
+        if (!udid || !model) { alert('No device connected'); return; }
+        if (!confirm('This will ERASE the device and restore firmware. Continue?')) return;
+        const version = el('restore-version').value || null;
+        el('restore-progress').classList.remove('hidden');
+        el('restore-status').textContent = 'Starting restore...';
+        try {
+            const body = { model };
+            if (version) body.version = version;
+            const r = await fetch('/api/firmware/restore/' + udid, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+            });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const result = await r.json();
+            el('restore-status').textContent = 'Restore ' + (result.status || 'complete');
+        } catch (e) {
+            el('restore-status').textContent = 'Failed: ' + e.message;
+        }
+    }
+
+    function renderWipeCard(udid) {
+        const info = currentDevice ? currentDevice.info : {};
+        let html = '<div class="space-y-2">';
+        html += '<div class="text-sm text-gray-500 mb-2">Factory reset device and generate erasure certificate</div>';
+        html += '<div><label class="text-xs text-gray-500">Operator</label><input type="text" id="wipe-operator" placeholder="Your name" class="w-full border rounded px-2 py-1 text-sm mb-2"></div>';
+        html += '<button onclick="startWipe()" class="text-xs bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700">Wipe Device</button>';
+        html += '<div id="wipe-status" class="text-sm mt-2"></div>';
+        html += '</div>';
+        el('fw-wipe').innerHTML = html;
+    }
+
+    async function startWipe() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) { alert('No device connected'); return; }
+        if (!confirm('This will ERASE ALL DATA on the device. Continue?')) return;
+        const info = currentDevice.info || {};
+        const operator = el('wipe-operator').value || '';
+        el('wipe-status').innerHTML = '<span class="text-yellow-600 animate-pulse">Wiping...</span>';
+        try {
+            const r = await fetch('/api/firmware/wipe/' + udid, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ serial: info.serial || '', imei: info.imei || '', model: info.product_type || '', ios_version: info.ios_version || '', operator })
+            });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const result = await r.json();
+            let statusHtml = result.status === 'erased'
+                ? '<span class="text-green-600 font-semibold">Wipe complete</span>'
+                : '<span class="text-red-600 font-semibold">Wipe failed</span>';
+            if (result.cert_path) {
+                const deviceId = inventoryDeviceId;
+                if (deviceId) statusHtml += ' <a href="/api/firmware/certificate/' + deviceId + '" target="_blank" class="text-blue-600 underline text-xs">Download Certificate</a>';
+            }
+            el('wipe-status').innerHTML = statusHtml;
+        } catch (e) {
+            el('wipe-status').innerHTML = '<span class="text-red-600">Failed: ' + esc(e.message) + '</span>';
+        }
+    }
+
+    async function downloadIPSW(version, buildId) {
+        const model = currentDevice && currentDevice.info ? currentDevice.info.product_type : null;
+        if (!model) { alert('No device model known'); return; }
+        if (!confirm('Download IPSW for ' + model + ' ' + version + '? This may take a while.')) return;
+        try {
+            const r = await fetch('/api/firmware/download', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model, version, build_id: buildId })
+            });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            alert('Download started — check IPSW cache');
+            fetchFirmwareCache();
+        } catch (e) { alert('Failed: ' + e.message); }
+    }
+
+    async function evictIPSW(model, version) {
+        if (!confirm('Remove cached IPSW for ' + model + ' ' + version + '?')) return;
+        try {
+            const r = await fetch('/api/firmware/cache/' + model + '/' + version, { method: 'DELETE' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            fetchFirmwareCache();
+        } catch (e) { alert('Failed: ' + e.message); }
+    }
     function loadToolsTab() {}
     function loadPhotosTab() {}
     function loadReportsTab() {}
-    function setCardDisabled(cardId, reason) {}
-    function clearCardDisabled(cardId) {}
+    function setCardDisabled(cardId, reason) {
+        const card = el(cardId);
+        if (!card) return;
+        card.classList.add('card-disabled');
+        if (!card.querySelector('.card-disabled-reason')) {
+            const h3 = card.querySelector('h3');
+            if (h3) {
+                const banner = document.createElement('div');
+                banner.className = 'card-disabled-reason';
+                banner.textContent = reason;
+                h3.insertAdjacentElement('afterend', banner);
+            }
+        }
+        const body = card.querySelector('div:last-child');
+        if (body) body.classList.add('card-body');
+    }
+
+    function clearCardDisabled(cardId) {
+        const card = el(cardId);
+        if (!card) return;
+        card.classList.remove('card-disabled');
+        const banner = card.querySelector('.card-disabled-reason');
+        if (banner) banner.remove();
+        const body = card.querySelector('.card-body');
+        if (body) body.classList.remove('card-body');
+    }
 
     // Init
     connectWebSocket();
