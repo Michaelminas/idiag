@@ -320,11 +320,18 @@ def _save_via_tsschecker(
 def _save_via_pymobiledevice3(
     ecid: str, device_model: str, ios_version: str, blob_dir: Path
 ) -> Optional[Path]:
-    """Save SHSH blobs using pymobiledevice3 TSS module (fallback method).
+    """Save SHSH blobs using pymobiledevice3 TSS module (best-effort fallback).
 
-    Fetches the BuildManifest from ipsw.me, extracts the correct BuildIdentity,
-    and sends a proper TSS request with board config and version-specific fields.
+    WARNING: This fallback uses a simplified TSS request without full BuildManifest
+    parsing. Blobs saved this way may lack fields required for FutureRestore.
+    For production-quality blobs, install tsschecker which handles BuildManifest,
+    nonce generation, and APTicket fields automatically.
     """
+    logger.warning(
+        "Using pymobiledevice3 SHSH fallback for %s/%s — blobs may be incomplete. "
+        "Install tsschecker for production-quality blob saving.",
+        device_model, ios_version,
+    )
     try:
         from pymobiledevice3.restore.tss import TSSRequest
     except ImportError:

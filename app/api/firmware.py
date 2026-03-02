@@ -72,7 +72,9 @@ async def evict_cached_ipsw(model: str, version: str):
 
 @router.post("/download")
 async def download_ipsw(req: DownloadRequest):
-    """Trigger an IPSW download."""
+    """Trigger an IPSW download with real-time WebSocket progress."""
+    from app.api.websocket import broadcast
+
     firmware = FirmwareVersion(
         version=req.version, build_id=req.build_id, model=req.model,
         url=req.url, sha1=req.sha1, size_bytes=req.size_bytes,
@@ -88,7 +90,14 @@ async def download_ipsw(req: DownloadRequest):
             raise HTTPException(404, f"Version {req.version} not found for {req.model}")
         firmware = match
 
-    path = await asyncio.to_thread(firmware_manager.download_ipsw, firmware)
+    loop = asyncio.get_event_loop()
+
+    def _progress(p: RestoreProgress):
+        asyncio.run_coroutine_threadsafe(
+            broadcast("download_progress", p.model_dump()), loop
+        )
+
+    path = await asyncio.to_thread(firmware_manager.download_ipsw, firmware, progress_callback=_progress)
     if path:
         return {"status": "downloaded", "path": str(path)}
     raise HTTPException(500, "Download failed")
@@ -154,20 +163,19 @@ async def exit_recovery(udid: str):
 
 @router.post("/restore/{udid}")
 async def restore_device(udid: str, req: RestoreRequest):
-    """Start a full firmware restore."""
+    """Start a full firmware restore with real-time WebSocket progress."""
     from app.api.websocket import broadcast
 
-    progress_log: list[RestoreProgress] = []
+    loop = asyncio.get_event_loop()
 
     def _progress(p: RestoreProgress):
-        progress_log.append(p)
+        asyncio.run_coroutine_threadsafe(
+            broadcast("restore_progress", p.model_dump()), loop
+        )
 
     ok = await asyncio.to_thread(
         firmware_manager.restore_device, udid, req.model, req.version, _progress
     )
-
-    if progress_log:
-        await broadcast("restore_progress", progress_log[-1].model_dump())
 
     if ok:
         return {"status": "restored", "version": req.version or "latest"}
@@ -178,7 +186,14 @@ async def restore_device(udid: str, req: RestoreRequest):
 
 @router.post("/wipe/{udid}")
 async def wipe_device(udid: str, req: WipeRequest):
-    """Erase device and generate erasure certificate."""
+    """Erase device and generate erasure certificate with WebSocket progress."""
+    from app.api.websocket import broadcast
+
+    loop = asyncio.get_event_loop()
+    asyncio.run_coroutine_threadsafe(
+        broadcast("wipe_progress", {"udid": udid, "stage": "erasing", "percent": 0}), loop
+    )
+
     ok = await asyncio.to_thread(wipe_service.erase_device, udid)
 
     record = WipeRecord(
@@ -208,7 +223,6 @@ async def wipe_device(udid: str, req: WipeRequest):
             str(cert_path) if cert_path else "",
         )
 
-    from app.api.websocket import broadcast
     await broadcast("wipe_complete", {"udid": udid, "success": ok, "cert_path": str(cert_path or "")})
 
     return {
