@@ -283,7 +283,67 @@
 
             <!-- Tab: Tools -->
             <div id="panel-tools" class="hidden">
-                <div class="text-gray-400 text-center py-8">Loading tools...</div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- checkra1n -->
+                    <div id="tool-checkra1n-card" class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">checkra1n Jailbreak</h3>
+                        <div id="tool-checkra1n" class="card-body">
+                            <div class="text-sm text-gray-500 mb-3">Jailbreak for checkm8-compatible devices (A5–A11). Enables diagnostic access on locked devices.</div>
+                            <button onclick="runCheckra1n()" class="text-xs bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700">Run checkra1n</button>
+                            <div id="checkra1n-status" class="text-sm mt-2"></div>
+                        </div>
+                    </div>
+
+                    <!-- Broque Ramdisk -->
+                    <div id="tool-broque-card" class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Broque Ramdisk</h3>
+                        <div id="tool-broque" class="card-body">
+                            <div class="text-sm text-gray-500 mb-3">Bypass activation lock on passcode-locked devices for diagnostic purposes.</div>
+                            <button onclick="runBroque()" class="text-xs bg-yellow-600 text-white px-3 py-1 rounded hover:bg-yellow-700">Run Bypass</button>
+                            <div id="broque-status" class="text-sm mt-2"></div>
+                        </div>
+                    </div>
+
+                    <!-- SSH Ramdisk -->
+                    <div id="tool-ssh-card" class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">SSH Ramdisk</h3>
+                        <div id="tool-ssh" class="card-body">
+                            <div class="text-sm text-gray-500 mb-3">Boot SSH ramdisk for low-level data extraction from locked devices.</div>
+                            <div class="flex gap-2 flex-wrap">
+                                <button onclick="bootSSHRamdisk()" class="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Boot Ramdisk</button>
+                                <button onclick="extractSSHData()" class="text-xs bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">Extract Data</button>
+                            </div>
+                            <div id="ssh-status" class="text-sm mt-2"></div>
+                        </div>
+                    </div>
+
+                    <!-- FutureRestore -->
+                    <div id="tool-futurerestore-card" class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">FutureRestore</h3>
+                        <div id="tool-futurerestore" class="card-body">
+                            <div class="text-sm text-gray-500 mb-3">Restore to unsigned firmware using saved SHSH blobs.</div>
+                            <div class="space-y-2">
+                                <input type="text" id="fr-blob-path" placeholder="SHSH blob path" class="w-full border rounded px-2 py-1 text-sm">
+                                <input type="text" id="fr-ipsw-path" placeholder="IPSW file path" class="w-full border rounded px-2 py-1 text-sm">
+                                <div class="flex gap-2">
+                                    <button onclick="checkFutureRestore()" class="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200">Pre-flight Check</button>
+                                    <button onclick="runFutureRestore()" class="text-xs bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700">Restore</button>
+                                </div>
+                            </div>
+                            <div id="futurerestore-status" class="text-sm mt-2"></div>
+                        </div>
+                    </div>
+
+                    <!-- Cable Check -->
+                    <div id="tool-cable-card" class="bg-white rounded-lg shadow-md p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3 border-b pb-2">Cable Quality</h3>
+                        <div id="tool-cable" class="card-body">
+                            <div class="text-sm text-gray-500 mb-3">Test USB cable connection quality and data transfer speed.</div>
+                            <button onclick="checkCable()" class="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Test Cable</button>
+                            <div id="cable-status" class="text-sm mt-2"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Tab: Photos -->
@@ -1287,7 +1347,147 @@
             fetchFirmwareCache();
         } catch (e) { alert('Failed: ' + e.message); }
     }
-    function loadToolsTab() {}
+    // -- Tools Tab --
+
+    async function loadToolsTab() {
+        if (toolsLoaded) return;
+        toolsLoaded = true;
+
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+
+        // Check tool availability
+        try {
+            const r = await fetch('/api/tools/availability');
+            if (r.ok) toolAvailability = await r.json();
+        } catch (e) { console.error('Tool availability check failed:', e); }
+
+        // Apply disabled states based on availability
+        if (!toolAvailability.checkra1n) setCardDisabled('tool-checkra1n-card', 'checkra1n not installed on system');
+        else if (!deviceCapabilities.checkm8) setCardDisabled('tool-checkra1n-card', 'Device not checkm8-compatible (requires A5\u2013A11)');
+
+        if (!toolAvailability.broque) setCardDisabled('tool-broque-card', 'Broque Ramdisk not installed on system');
+        if (!toolAvailability.ssh_ramdisk) setCardDisabled('tool-ssh-card', 'SSH Ramdisk tools not installed on system');
+        if (!toolAvailability.futurerestore) setCardDisabled('tool-futurerestore-card', 'futurerestore not installed on system');
+
+        if (!udid) {
+            setCardDisabled('tool-cable-card', 'No device connected');
+            if (toolAvailability.checkra1n && deviceCapabilities.checkm8) setCardDisabled('tool-checkra1n-card', 'No device connected');
+            if (toolAvailability.broque) setCardDisabled('tool-broque-card', 'No device connected');
+            if (toolAvailability.ssh_ramdisk) setCardDisabled('tool-ssh-card', 'No device connected');
+            if (toolAvailability.futurerestore) setCardDisabled('tool-futurerestore-card', 'No device connected');
+        }
+    }
+
+    async function runCheckra1n() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        if (!confirm('Run checkra1n jailbreak? Device must be in DFU mode.')) return;
+        el('checkra1n-status').innerHTML = '<span class="text-yellow-600 animate-pulse">Running...</span>';
+        try {
+            const r = await fetch('/api/tools/checkra1n/' + udid, { method: 'POST' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const result = await r.json();
+            el('checkra1n-status').innerHTML = result.success
+                ? '<span class="text-green-600">Jailbreak successful</span>'
+                : '<span class="text-red-600">Failed: ' + esc(result.error || 'Unknown error') + '</span>';
+        } catch (e) { el('checkra1n-status').innerHTML = '<span class="text-red-600">Error: ' + esc(e.message) + '</span>'; }
+    }
+
+    async function runBroque() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        el('broque-status').innerHTML = '<span class="text-yellow-600 animate-pulse">Running bypass...</span>';
+        try {
+            const r = await fetch('/api/tools/broque/' + udid, { method: 'POST' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const result = await r.json();
+            el('broque-status').innerHTML = result.success
+                ? '<span class="text-green-600">Bypass successful</span>'
+                : '<span class="text-red-600">Failed: ' + esc(result.error || 'Unknown error') + '</span>';
+        } catch (e) { el('broque-status').innerHTML = '<span class="text-red-600">Error: ' + esc(e.message) + '</span>'; }
+    }
+
+    async function bootSSHRamdisk() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        el('ssh-status').innerHTML = '<span class="text-yellow-600 animate-pulse">Booting ramdisk...</span>';
+        try {
+            const r = await fetch('/api/tools/ssh-ramdisk/' + udid, { method: 'POST' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const result = await r.json();
+            el('ssh-status').innerHTML = result.success
+                ? '<span class="text-green-600">Ramdisk booted</span>'
+                : '<span class="text-red-600">Failed: ' + esc(result.error || 'Unknown error') + '</span>';
+        } catch (e) { el('ssh-status').innerHTML = '<span class="text-red-600">Error: ' + esc(e.message) + '</span>'; }
+    }
+
+    async function extractSSHData() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        el('ssh-status').innerHTML = '<span class="text-yellow-600 animate-pulse">Extracting data...</span>';
+        try {
+            const r = await fetch('/api/tools/ssh-ramdisk/' + udid + '/extract', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data_types: ['contacts', 'photos', 'messages'], target_dir: '/tmp/idiag-extract' })
+            });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const result = await r.json();
+            el('ssh-status').innerHTML = '<span class="text-green-600">Extraction complete</span>';
+        } catch (e) { el('ssh-status').innerHTML = '<span class="text-red-600">Error: ' + esc(e.message) + '</span>'; }
+    }
+
+    async function checkFutureRestore() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        const blob = el('fr-blob-path').value;
+        if (!blob) { alert('Enter SHSH blob path'); return; }
+        el('futurerestore-status').innerHTML = '<span class="text-yellow-600 animate-pulse">Checking...</span>';
+        try {
+            const r = await fetch('/api/tools/futurerestore/' + udid + '/check?target_version=&blob_path=' + encodeURIComponent(blob));
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const result = await r.json();
+            el('futurerestore-status').innerHTML = result.compatible
+                ? '<span class="text-green-600">Compatible — ready to restore</span>'
+                : '<span class="text-red-600">Not compatible: ' + esc(result.reason || '') + '</span>';
+        } catch (e) { el('futurerestore-status').innerHTML = '<span class="text-red-600">Error: ' + esc(e.message) + '</span>'; }
+    }
+
+    async function runFutureRestore() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        const blob = el('fr-blob-path').value;
+        const ipsw = el('fr-ipsw-path').value;
+        if (!blob || !ipsw) { alert('Enter both SHSH blob and IPSW paths'); return; }
+        if (!confirm('Run FutureRestore? This will erase the device.')) return;
+        el('futurerestore-status').innerHTML = '<span class="text-yellow-600 animate-pulse">Restoring...</span>';
+        try {
+            const r = await fetch('/api/tools/futurerestore/' + udid, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ipsw_path: ipsw, blob_path: blob, set_nonce: true })
+            });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const result = await r.json();
+            el('futurerestore-status').innerHTML = result.success
+                ? '<span class="text-green-600">Restore successful</span>'
+                : '<span class="text-red-600">Failed: ' + esc(result.error || '') + '</span>';
+        } catch (e) { el('futurerestore-status').innerHTML = '<span class="text-red-600">Error: ' + esc(e.message) + '</span>'; }
+    }
+
+    async function checkCable() {
+        const udid = currentDevice && currentDevice.info ? currentDevice.info.udid : null;
+        if (!udid) return;
+        el('cable-status').innerHTML = '<span class="text-yellow-600 animate-pulse">Testing...</span>';
+        try {
+            const r = await fetch('/api/tools/cable/' + udid);
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const result = await r.json();
+            const color = result.quality === 'good' ? 'text-green-600' : result.quality === 'fair' ? 'text-yellow-600' : 'text-red-600';
+            let html = '<div class="' + color + ' font-semibold">' + esc((result.quality || 'unknown').toUpperCase()) + '</div>';
+            if (result.speed) html += '<div class="text-sm text-gray-500">Speed: ' + esc(result.speed) + '</div>';
+            if (result.type) html += '<div class="text-sm text-gray-500">Type: ' + esc(result.type) + '</div>';
+            el('cable-status').innerHTML = html;
+        } catch (e) { el('cable-status').innerHTML = '<span class="text-red-600">Error: ' + esc(e.message) + '</span>'; }
+    }
     function loadPhotosTab() {}
     function loadReportsTab() {}
     function setCardDisabled(cardId, reason) {
